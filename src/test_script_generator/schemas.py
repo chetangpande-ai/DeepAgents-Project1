@@ -7,7 +7,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 FrameworkProfile = Literal["java-testng-maven", "java-bdd-maven"]
 AutomationLayer = Literal["ui", "api", "db", "hybrid"]
 ActionabilityStatus = Literal["ready", "partial", "blocked"]
-PublishStatus = Literal["skipped", "prepared", "pushed", "pr_created", "failed", "no_changes"]
+PublishStatus = Literal[
+    "skipped",
+    "prepared",
+    "pushed",
+    "initialized",
+    "pr_created",
+    "failed",
+    "no_changes",
+]
 
 
 class TestStep(BaseModel):
@@ -168,6 +176,7 @@ class RepositoryPublishResult(BaseModel):
     commit_sha: str | None = None
     pull_request_url: str | None = None
     written_paths: list[str] = Field(default_factory=list)
+    initializes_empty_repository: bool = False
     message: str
     errors: list[str] = Field(default_factory=list)
 

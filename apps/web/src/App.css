@@ -433,6 +433,7 @@ button:focus-visible {
 }
 
 .publish-panel.pushed,
+.publish-panel.initialized,
 .publish-panel.pr_created {
   border-left: 4px solid #1f9d63;
 }

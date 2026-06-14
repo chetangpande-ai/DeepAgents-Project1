@@ -60,7 +60,14 @@ type WebRecordingEvidence = {
 }
 
 type RepositoryPublishResult = {
-  status: 'skipped' | 'prepared' | 'pushed' | 'pr_created' | 'failed' | 'no_changes'
+  status:
+    | 'skipped'
+    | 'prepared'
+    | 'pushed'
+    | 'initialized'
+    | 'pr_created'
+    | 'failed'
+    | 'no_changes'
   provider: string
   repository?: string | null
   repo_path?: string | null
@@ -69,6 +76,7 @@ type RepositoryPublishResult = {
   commit_sha?: string | null
   pull_request_url?: string | null
   written_paths: string[]
+  initializes_empty_repository: boolean
   message: string
   errors: string[]
 }

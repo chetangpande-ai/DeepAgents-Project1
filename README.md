@@ -118,6 +118,11 @@ Generated Java artifacts are written to the GitHub repository configured by
 `ALLOW_PR_CREATION=true`. Keep `DRY_RUN=true` when you only want local run
 artifacts and no repository push.
 
+If the configured repository is empty and has no commits yet, the workflow
+initializes `GIT_BASE_BRANCH` with the first generated artifact commit. A pull
+request is not created for that first push because there is no existing base
+branch to target.
+
 ## Run
 
 ```powershell

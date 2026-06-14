@@ -240,7 +240,7 @@ def _build_stage_logs(state: GeneratorState) -> list[StageLog]:
 
     if state.publish_result:
         publish_status: Literal["complete", "warning", "blocked", "skipped"]
-        if state.publish_result.status in {"pushed", "pr_created", "prepared"}:
+        if state.publish_result.status in {"pushed", "initialized", "pr_created", "prepared"}:
             publish_status = "complete"
         elif state.publish_result.status in {"skipped", "no_changes"}:
             publish_status = "skipped"
@@ -308,12 +308,16 @@ def _build_approval_notices(state: GeneratorState) -> list[ApprovalNotice]:
                 or "Generated code pull request was created.",
             )
         )
-    elif state.publish_result and state.publish_result.status == "pushed":
+    elif state.publish_result and state.publish_result.status in {"pushed", "initialized"}:
         notices.append(
             ApprovalNotice(
                 kind="pr",
                 severity="info",
-                title="Branch pushed",
+                title=(
+                    "Repository initialized"
+                    if state.publish_result.status == "initialized"
+                    else "Branch pushed"
+                ),
                 message=(
                     f"Generated code pushed to {state.publish_result.repository} "
                     f"on branch {state.publish_result.branch_name}."

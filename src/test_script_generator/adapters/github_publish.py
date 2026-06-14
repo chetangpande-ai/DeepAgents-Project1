@@ -64,19 +64,29 @@ def prepare_generated_artifacts_for_publish(
             dirty.stdout.strip(),
         )
 
-    branch_plan = build_branch_plan(
-        settings.git_work_branch_prefix,
-        source_ids,
-        settings.git_base_branch,
-        settings.git_remote_name,
-    )
-    fetch = _run_git(repo_path, ["fetch", _remote_fetch_url(settings), settings.git_base_branch], settings)
-    if not fetch.ok:
-        return _failed(repo_path, settings, "Unable to fetch the configured base branch.", fetch.error)
+    empty_repo = _repository_has_no_commits(repo_path, settings)
+    if empty_repo:
+        branch_name = settings.git_base_branch
+        base_branch = None
+        checkout = _prepare_empty_repository_branch(repo_path, branch_name, settings)
+        if not checkout.ok:
+            return _failed(repo_path, settings, "Unable to initialize the empty configured repository.", checkout.error)
+    else:
+        branch_plan = build_branch_plan(
+            settings.git_work_branch_prefix,
+            source_ids,
+            settings.git_base_branch,
+            settings.git_remote_name,
+        )
+        branch_name = branch_plan.work_branch
+        base_branch = branch_plan.base_branch
+        fetch = _run_git(repo_path, ["fetch", _remote_fetch_url(settings), settings.git_base_branch], settings)
+        if not fetch.ok:
+            return _failed(repo_path, settings, "Unable to fetch the configured base branch.", fetch.error)
 
-    checkout = _run_git(repo_path, ["checkout", "-B", branch_plan.work_branch, "FETCH_HEAD"], settings)
-    if not checkout.ok:
-        return _failed(repo_path, settings, "Unable to create generation branch.", checkout.error)
+        checkout = _run_git(repo_path, ["checkout", "-B", branch_name, "FETCH_HEAD"], settings)
+        if not checkout.ok:
+            return _failed(repo_path, settings, "Unable to create generation branch.", checkout.error)
 
     try:
         written_paths = _write_artifacts(repo_path, artifacts)
@@ -91,8 +101,9 @@ def prepare_generated_artifacts_for_publish(
             status="no_changes",
             repository=repository,
             repo_path=str(repo_path),
-            branch_name=branch_plan.work_branch,
-            base_branch=branch_plan.base_branch,
+            branch_name=branch_name,
+            base_branch=base_branch,
+            initializes_empty_repository=empty_repo,
             written_paths=written_paths,
             message="Generated artifacts matched the repository contents; no commit was created.",
         )
@@ -101,10 +112,15 @@ def prepare_generated_artifacts_for_publish(
         status="prepared",
         repository=repository,
         repo_path=str(repo_path),
-        branch_name=branch_plan.work_branch,
-        base_branch=branch_plan.base_branch,
+        branch_name=branch_name,
+        base_branch=base_branch,
+        initializes_empty_repository=empty_repo,
         written_paths=written_paths,
-        message="Generated artifacts were written to the configured repository branch.",
+        message=(
+            "Generated artifacts were written to initialize the empty configured repository."
+            if empty_repo
+            else "Generated artifacts were written to the configured repository branch."
+        ),
     )
 
 
@@ -160,11 +176,17 @@ def push_prepared_artifacts(
 
     pushed = publish_result.model_copy(
         update={
-            "status": "pushed",
+            "status": "initialized" if publish_result.initializes_empty_repository else "pushed",
             "commit_sha": commit_sha,
-            "message": "Generated artifacts were pushed to the configured GitHub repository.",
+            "message": (
+                "Generated artifacts initialized the empty configured GitHub repository."
+                if publish_result.initializes_empty_repository
+                else "Generated artifacts were pushed to the configured GitHub repository."
+            ),
         }
     )
+    if publish_result.initializes_empty_repository:
+        return pushed
     if not settings.allow_pr_creation:
         return pushed
 
@@ -261,6 +283,18 @@ def _remote_fetch_url(settings: Settings) -> str:
     if settings.github_owner and settings.github_repository:
         return f"https://github.com/{settings.github_owner}/{settings.github_repository}.git"
     return settings.git_remote_name
+
+
+def _repository_has_no_commits(repo_path: Path, settings: Settings) -> bool:
+    head = _run_git(repo_path, ["rev-parse", "--verify", "HEAD"], settings)
+    return not head.ok
+
+
+def _prepare_empty_repository_branch(repo_path: Path, branch_name: str, settings: Settings) -> "_GitResult":
+    checkout = _run_git(repo_path, ["checkout", "--orphan", branch_name], settings)
+    if checkout.ok:
+        return checkout
+    return _run_git(repo_path, ["switch", "--orphan", branch_name], settings)
 
 
 def _remote_push_url(settings: Settings) -> str:
