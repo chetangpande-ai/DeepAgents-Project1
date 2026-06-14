@@ -103,8 +103,9 @@ LangGraph should control deterministic routing, retries, state, and checkpoints.
 - The Java automation repository already has a Maven structure or a desired target structure.
 - BDD means Cucumber feature files plus Java step definitions executed through JUnit.
 - UI automation may require page objects, selectors, browser configuration, and stable waits.
-- API automation may require reusable clients, endpoints, headers, schemas, and test data.
-- DB validation may require safe read-only queries, connection configuration, and expected data rules.
+- Web automation can use Playwright codegen to record missing implementation steps when the business scenario is clear and app access is available.
+- API automation requires Swagger/OpenAPI, Bruno collection, or explicit endpoint/payload/response evidence.
+- DB validation requires a connection profile or credentials, query, query parameters, and expected validation points.
 - Generated scripts should default to dry-run mode until the PR workflow is verified.
 
 ## 6. Proposed Python Project Layout
@@ -134,6 +135,9 @@ test-script-generator/
       adapters/
         __init__.py
         manual_input.py
+        playwright_codegen.py
+        api_evidence.py
+        db_evidence.py
         filesystem.py
         maven.py
         git_provider.py
@@ -162,11 +166,12 @@ test-script-generator/
 
 ```powershell
 uv init --app --package --name test-script-generator
-uv add langchain langchain-openai langgraph python-dotenv pydantic pydantic-settings typer rich httpx beautifulsoup4 lxml tenacity
+uv add langchain langchain-openai langgraph python-dotenv pydantic pydantic-settings typer rich httpx beautifulsoup4 lxml tenacity pyyaml
 uv add --dev pytest pytest-cov ruff mypy
 ```
 
 `beautifulsoup4` and `lxml` are included because manually copied Azure DevOps test case steps may arrive as HTML.
+Playwright codegen recording requires a Playwright CLI available to the agent environment, typically through a configured Node.js toolchain.
 
 ## 8. Environment Configuration
 
@@ -179,6 +184,7 @@ MESH_MODEL=
 TSG_TEMPERATURE=0.1
 
 INPUT_TESTCASE_FILE=./input/test-cases.json
+INPUT_EVIDENCE_DIR=./input/evidence
 AUTOMATION_REPO_PATH=../your-java-automation-repo
 DEFAULT_FRAMEWORK_PROFILE=java-testng-maven
 
@@ -186,6 +192,16 @@ DRY_RUN=true
 MAX_REPAIR_ATTEMPTS=2
 ALLOW_REPO_WRITES=true
 ALLOW_PR_CREATION=false
+
+PLAYWRIGHT_CODEGEN_ENABLED=true
+PLAYWRIGHT_CODEGEN_OUTPUT_DIR=.tsg-runs/recordings
+PLAYWRIGHT_APP_BASE_URL=
+PLAYWRIGHT_STORAGE_STATE_PATH=
+
+API_CONTRACTS_DIR=./input/api-contracts
+BRUNO_COLLECTIONS_DIR=./input/bruno
+
+DB_CONNECTION_PROFILES_DIR=./input/db-profiles
 
 GIT_PROVIDER=azure_repos
 GIT_REMOTE_NAME=origin
@@ -243,6 +259,33 @@ class SourceTestCase(BaseModel):
     linked_requirement_ids: list[str] = Field(default_factory=list)
     area_path: str | None = None
     iteration_path: str | None = None
+    web: dict | None = None
+    api: dict | None = None
+    db: dict | None = None
+
+class WebRecordingEvidence(BaseModel):
+    test_case_id: str
+    app_url: str
+    recording_script_path: str
+    notes_path: str | None = None
+    storage_state_path: str | None = None
+    generated_locator_candidates: list[str] = Field(default_factory=list)
+
+class ApiEvidence(BaseModel):
+    test_case_id: str
+    swagger_or_openapi_path: str | None = None
+    bruno_collection_path: str | None = None
+    endpoint: str | None = None
+    method: str | None = None
+    request_payload: dict | None = None
+    expected_status: int | None = None
+    expected_response_points: list[str] = Field(default_factory=list)
+
+class DbValidationEvidence(BaseModel):
+    test_case_id: str
+    connection_profile: str
+    query: str
+    validation_points: list[str]
 
 class RepoProfile(BaseModel):
     root_path: str
@@ -283,6 +326,9 @@ class GeneratorState(BaseModel):
     input_file: str | None = None
     requested_test_case_ids: list[str] = Field(default_factory=list)
     test_cases: list[SourceTestCase] = Field(default_factory=list)
+    web_recordings: list[WebRecordingEvidence] = Field(default_factory=list)
+    api_evidence: list[ApiEvidence] = Field(default_factory=list)
+    db_evidence: list[DbValidationEvidence] = Field(default_factory=list)
     actionability_assessments: list[ActionabilityAssessment] = Field(default_factory=list)
     framework_profile: FrameworkProfile | None = None
     repo_profile: RepoProfile | None = None
@@ -305,6 +351,8 @@ normalize_test_cases
 classify_framework_profile
 scan_automation_repo
 assess_test_case_actionability
+record_missing_web_steps_with_playwright_codegen
+merge_recorded_web_steps
 create_generation_plan
 generate_scripts
 self_review_artifacts
@@ -331,7 +379,15 @@ scan_automation_repo
 
 assess_test_case_actionability
   -> package_final_report       if all requested test cases are blocked
+  -> record_missing_web_steps_with_playwright_codegen if web test cases need recordable implementation details
   -> create_generation_plan     if at least one test case is ready or partial
+
+record_missing_web_steps_with_playwright_codegen
+  -> merge_recorded_web_steps   if recording artifacts are saved
+  -> package_final_report       if recording is cancelled or required app access is missing
+
+merge_recorded_web_steps
+  -> create_generation_plan
 
 validate_with_maven
   -> repair_artifacts           if failed and repair_attempts < MAX_REPAIR_ATTEMPTS
@@ -401,6 +457,9 @@ Responsibilities:
 - Detect vague one-line flows such as `place trade`, `submit request`, `process transaction`, or `validate record`.
 - Detect missing business data, hidden multi-screen workflows, unclear actors, missing setup, missing assertions, and missing environment assumptions.
 - Block web automation when the page, action sequence, input values, and success signal cannot be inferred from the test case or existing repo conventions.
+- Route clear web scenarios with missing implementation steps to Playwright codegen when recording inputs are available.
+- Block API automation unless Swagger/OpenAPI, Bruno, or explicit payload and endpoint information is available.
+- Block DB validation unless connection profile, query, and validation points are available.
 - Generate clarification questions and minimum required details for blocked cases.
 - Allow partial generation only when the executable part is clear and the unclear part can be cleanly isolated.
 
@@ -413,6 +472,8 @@ Block script generation if:
 - required input data is missing, such as instrument, quantity, order type, side, account, or user role
 - the expected result is not directly verifiable
 - UI screens, API endpoints, or DB validation targets are not identifiable
+- an API testcase lacks Swagger/OpenAPI, Bruno collection, or explicit endpoint/payload/response details
+- a DB testcase lacks a connection profile, query, query parameters, or validation points
 - the agent would need to invent locators, workflow steps, payload fields, or assertions
 ```
 
@@ -454,7 +515,45 @@ Example blocked assessment for a vague trade test:
 
 For this case, the agent should produce a clarification report, not a feature file, step definition, page object, or placeholder locator code.
 
-### 11.4 Script Planner
+### 11.4 Playwright Codegen Recorder
+
+Used for web test cases when the business scenario is clear but implementation details are missing.
+
+Responsibilities:
+
+- Start a human-assisted Playwright codegen recording session against `PLAYWRIGHT_APP_BASE_URL`.
+- Let the tester perform missing UI steps in the browser.
+- Save the recorded script, notes, and any locator candidates under the run folder.
+- Merge existing manual test case steps with newly recorded UI actions.
+- Treat recorded code as evidence, not as final production automation.
+- Refactor the recorded flow into the target Java framework style: TestNG class, Cucumber-JUnit step definitions, page objects, and reusable helpers.
+
+Required inputs:
+
+- App URL.
+- Test credentials or `PLAYWRIGHT_STORAGE_STATE_PATH`.
+- Test data needed to execute the flow.
+- Clear enough business intent to know what the tester is recording.
+
+Saved artifacts:
+
+```text
+.tsg-runs/<run-id>/recordings/<test-case-id>/
+  playwright-codegen.java
+  recording-notes.md
+  locator-candidates.json
+  merged-test-steps.json
+```
+
+Rules:
+
+- Do not run codegen for vague cases such as `place trade` unless the missing business flow, trade data, and success criteria are already clarified.
+- Do not blindly commit codegen output.
+- Prefer existing page objects and step definitions over new ones.
+- Use recorded selectors only when they are stable, such as `data-testid`, accessible role/name, stable IDs, or well-known labels.
+- Unstable selectors must become locator gaps or review comments.
+
+### 11.5 Script Planner
 
 Responsibilities:
 
@@ -480,7 +579,7 @@ Output:
 }
 ```
 
-### 11.5 Java TestNG Writer
+### 11.6 Java TestNG Writer
 
 Used when `framework_profile=java-testng-maven`.
 
@@ -512,7 +611,7 @@ public void validateCheckoutErrorForInvalidCoupon() {
 }
 ```
 
-### 11.6 Java BDD Writer
+### 11.7 Java BDD Writer
 
 Used when `framework_profile=java-bdd-maven`.
 
@@ -544,7 +643,7 @@ Scenario: Reject checkout when coupon is invalid
   And the order should not be submitted
 ```
 
-### 11.7 Assertion Reviewer
+### 11.8 Assertion Reviewer
 
 Responsibilities:
 
@@ -553,7 +652,7 @@ Responsibilities:
 - Detect missing negative, boundary, or validation checks.
 - Detect hardcoded credentials or unstable waits.
 
-### 11.8 Maven Validator and Repair Agent
+### 11.9 Maven Validator and Repair Agent
 
 Responsibilities:
 
@@ -659,6 +758,25 @@ Preferred JSON format:
       "automation_layers": ["ui", "api", "db"],
       "tags": ["checkout", "negative"],
       "linked_requirement_ids": ["98765"],
+      "web": {
+        "record_missing_steps": true,
+        "app_url": "https://test.example.com",
+        "storage_state_path": "./input/evidence/storage/customer-user.json"
+      },
+      "api": {
+        "swagger_or_openapi_path": "./input/api-contracts/orders-openapi.yaml",
+        "bruno_collection_path": "./input/bruno/orders",
+        "endpoint": "/api/orders",
+        "method": "POST",
+        "request_payload_path": "./input/evidence/payloads/order-request.json",
+        "expected_status": 400,
+        "expected_response_points": ["error.code == INVALID_COUPON"]
+      },
+      "db": {
+        "connection_profile": "orders-readonly",
+        "query": "select status from orders where correlation_id = :correlationId",
+        "validation_points": ["no submitted order exists", "status is not SUBMITTED"]
+      },
       "steps": [
         {
           "step_number": 1,
@@ -693,6 +811,23 @@ Recommended fields:
 - `priority`
 - `area_path`
 - `iteration_path`
+- `web.record_missing_steps`
+- `web.app_url`
+- `web.storage_state_path`
+- `api.swagger_or_openapi_path`
+- `api.bruno_collection_path`
+- `api.request_payload_path`
+- `api.expected_response_points`
+- `db.connection_profile`
+- `db.query`
+- `db.validation_points`
+
+Layer-specific requirements:
+
+- Web test cases with missing UI steps require Playwright codegen inputs: app URL, credentials or storage state, test data, and clear business intent.
+- API test cases require at least one of Swagger/OpenAPI, Bruno collection, or explicit payload and endpoint details.
+- DB test cases require a database connection profile or credentials, the query to execute, and validation points.
+- Raw DB passwords, tokens, and secrets should not be committed in the testcase file. Use secure env vars or a named connection profile referenced by the testcase.
 
 ### 13.3 Pull Request Publishing
 
@@ -751,8 +886,11 @@ Problem 1: clear workflow, missing locators.
 - Example: the test case clearly says login, navigate to checkout, enter invalid coupon, submit, and verify the error message.
 - The agent may generate test intent, feature/scenario structure, step definitions, and page object method names.
 - The agent must not invent CSS selectors, XPath, IDs, or labels.
+- If missing steps or locators can be captured from the application, the agent should start a Playwright codegen recording session and save the recording artifacts.
+- The generation plan should merge the original testcase steps with newly recorded Playwright actions before creating Java automation.
 - If the repository has a locator registry pattern, the agent may reference required locator keys and produce a locator gap report.
 - If no locator registry pattern exists, the agent should generate a review report and avoid committing non-runnable locator code unless the team explicitly accepts skeleton generation.
+- Codegen output must be refactored into the target Java framework; it should not be pasted into the repo as raw generated code.
 
 Problem 2: vague business action, missing workflow and data.
 
@@ -786,6 +924,64 @@ Minimum clarification questions for `place trade`:
 
 Only after these details are available should the agent generate web automation.
 
+### 14.2 API Scenario Generation Policy
+
+API test cases require concrete interface evidence. The agent can generate API validation code only when at least one of these is available:
+
+- Swagger/OpenAPI contract.
+- Bruno collection.
+- Explicit endpoint, method, headers, request payload, expected status, and expected response validation points.
+
+The agent should use the evidence in this order:
+
+1. Existing API clients in the automation repo.
+2. Bruno collection request definitions.
+3. Swagger/OpenAPI operation definitions and schemas.
+4. Explicit payload information supplied in the testcase.
+
+Blocking rules:
+
+```text
+Block API script generation if:
+- endpoint or operation is unknown
+- request payload is missing for a request that requires a body
+- authentication/header requirements are unknown
+- expected status code is missing
+- response validation points are missing or vague
+- the agent would need to invent payload fields, schema details, or assertions
+```
+
+The final report should list missing API evidence, such as contract path, Bruno request name, payload example, auth profile, or response assertions.
+
+### 14.3 DB Validation Generation Policy
+
+DB test cases require explicit database validation evidence. The testcase must provide:
+
+- Database connection profile or secure credential reference.
+- Query or named query reference.
+- Query parameters or how to derive them from the test flow.
+- Validation points.
+
+Credential rule:
+
+- Prefer a named connection profile such as `orders-readonly`.
+- Store actual credentials in secure environment variables, secret stores, or local ignored config.
+- Do not commit raw DB passwords, tokens, or connection strings into generated scripts, reports, or testcase files.
+
+Blocking rules:
+
+```text
+Block DB script generation if:
+- connection profile or credentials are missing
+- query or named query reference is missing
+- query parameters are not derivable
+- validation points are missing
+- write access is required but no explicit setup/cleanup policy exists
+- the agent would need to invent table names, joins, expected rows, or assertions
+```
+
+DB validation should default to read-only checks. If setup or cleanup writes are required, they must be explicitly approved and implemented using existing repository patterns.
+
 ## 15. Human Approval Gates
 
 Recommended gates:
@@ -811,6 +1007,16 @@ Each run should create a local run folder:
 .tsg-runs/
   2026-06-14T10-30-00/
     input-test-cases.json
+    input-evidence/
+      api-contracts/
+      bruno/
+      db-profiles/
+    recordings/
+      <test-case-id>/
+        playwright-codegen.java
+        recording-notes.md
+        locator-candidates.json
+        merged-test-steps.json
     actionability-assessments.json
     repo-profile.json
     generation-plan.json
@@ -826,6 +1032,9 @@ Final report should include:
 - Framework profile used.
 - Automation layers processed: UI, API, DB, or hybrid.
 - Actionability status for each test case.
+- Playwright recording paths used for web scenarios.
+- API evidence used: Swagger/OpenAPI, Bruno, or explicit payload.
+- DB evidence used: connection profile, query reference, and validation points.
 - Generated file paths.
 - Locator gaps, if any.
 - Validation commands run.
@@ -876,12 +1085,16 @@ Deliverables:
 - JSON input parser.
 - Optional YAML, Markdown, and CSV parsers.
 - Test Case step HTML parser for copied ADO content.
+- Web evidence parser for app URL, storage state, and codegen recording preference.
+- API evidence parser for Swagger/OpenAPI path, Bruno path, endpoint, payload, expected status, and response validation points.
+- DB evidence parser for connection profile, query, query parameters, and validation points.
 - Normalized `SourceTestCase` schema.
 - Input validation errors with actionable messages.
 
 Exit criteria:
 
 - Given one manual input file, the CLI writes normalized JSON locally.
+- API and DB cases without required evidence are flagged before script generation.
 
 ### Phase 3 - Automation Repository Scanner
 
@@ -920,9 +1133,11 @@ Deliverables:
 - TestNG script writer.
 - BDD feature writer.
 - Step definition writer.
-- UI action generation using existing page objects or UI helpers.
-- API validation generation using existing service clients where available.
-- DB validation generation using existing read-only DB utilities where available.
+- UI action generation using existing page objects, UI helpers, and approved Playwright codegen recordings.
+- Playwright codegen recording adapter for missing web steps and locator candidates.
+- Merge logic for existing testcase steps plus newly recorded web actions.
+- API validation generation using Swagger/OpenAPI, Bruno, explicit payloads, and existing service clients where available.
+- DB validation generation using secure connection profiles, explicit queries, validation points, and existing read-only DB utilities where available.
 - Traceability metadata.
 - Test data artifact generation.
 - Web locator gap reporting for clear workflows with missing locators.
@@ -931,6 +1146,9 @@ Exit criteria:
 
 - Given a normalized test case and repo profile, the agent produces planned artifacts with valid paths and code.
 - Given a vague web scenario, the agent does not generate placeholder code.
+- Given a clear web scenario with missing steps, the agent can save a Playwright recording and use it as generation evidence.
+- API scripts are generated only when Swagger/OpenAPI, Bruno, or explicit endpoint/payload/response evidence exists.
+- DB validation scripts are generated only when connection profile, query, and validation points exist.
 
 ### Phase 6 - Validation and Repair
 
@@ -968,6 +1186,8 @@ Exit criteria:
 Deliverables:
 
 - Fixture manual test cases.
+- Fixture Playwright codegen recordings.
+- Fixture Swagger/OpenAPI contracts, Bruno collections, payloads, and DB validation specs.
 - Golden output checks.
 - Unit tests for parsers and profile detection.
 - Regression tests for generated file path safety.
@@ -999,13 +1219,15 @@ Build the MVP in this order:
 1. Local dry-run generator from fixture JSON.
 2. Automation repo scanner.
 3. Test Case Actionability Gate.
-4. Mixed UI/API/DB planning rules.
-5. TestNG Maven generation.
-6. Maven compile validation.
-7. BDD Maven generation.
-8. Repair loop.
-9. Local branch and commit workflow.
-10. PR creation against the configured repo.
+4. Evidence validation for web, API, and DB cases.
+5. Playwright codegen recording and merge flow for web gaps.
+6. Mixed UI/API/DB planning rules.
+7. TestNG Maven generation.
+8. Maven compile validation.
+9. BDD Maven generation.
+10. Repair loop.
+11. Local branch and commit workflow.
+12. PR creation against the configured repo.
 
 This order reduces risk because script generation can be tested locally before introducing branch push and PR publishing.
 
@@ -1018,8 +1240,11 @@ These are the remaining decisions needed before implementation starts:
 3. What are the actual package conventions and folder structure in your Java automation repositories?
 4. Do you already have page objects, API clients, DB utilities, test data utilities, or step definition libraries that the agent must reuse?
 5. What is the expected output for blocked test cases: clarifying questions in the report, PR comments, a defect, or a backlog task?
-6. For DB validation, are generated tests allowed to run read-only queries against test databases, or should DB checks be mocked/stubbed in v1?
-7. Should skeleton generation ever be allowed for clear web workflows with missing locators, or should those always stay report-only until locators are available?
+6. Which Playwright codegen command and target should be standardized in your environment?
+7. For API tests, should Swagger/OpenAPI, Bruno, or explicit payload files be treated as the preferred source of truth when they disagree?
+8. For DB validation, how should connection profiles resolve credentials: local `.env`, CI secrets, Key Vault, or another secret store?
+9. Are generated tests allowed to run read-only queries against test databases, or should DB checks be mocked/stubbed in v1?
+10. Should skeleton generation ever be allowed for clear web workflows with missing locators, or should those always stay report-only until locators are available?
 
 ## 20. Definition of Done
 
@@ -1031,9 +1256,13 @@ V1 is complete when:
 - The graph can choose `java-testng-maven` or `java-bdd-maven`.
 - The graph can classify UI, API, DB, and hybrid automation layers.
 - The graph can block vague or underspecified test cases before script generation.
+- The graph can route clear web cases with missing implementation steps through Playwright codegen recording.
 - The agent can generate traceable scripts.
 - The agent never invents web locators, hidden workflow steps, payload fields, or assertions.
 - A vague case such as `place trade -> trade should be placed successfully` produces a clarification report and no placeholder automation code.
+- Web scripts can use existing steps plus saved Playwright recording artifacts as generation evidence.
+- API scripts are blocked unless Swagger/OpenAPI, Bruno, or explicit endpoint/payload/response evidence is available.
+- DB validation scripts are blocked unless connection profile or credentials, query, and validation points are available.
 - Maven compile validation runs.
 - At least one repair attempt works for common generation errors.
 - A final report is created for every run.
