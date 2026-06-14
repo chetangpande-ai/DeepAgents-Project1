@@ -318,10 +318,7 @@ def _build_approval_notices(state: GeneratorState) -> list[ApprovalNotice]:
                     if state.publish_result.status == "initialized"
                     else "Branch pushed"
                 ),
-                message=(
-                    f"Generated code pushed to {state.publish_result.repository} "
-                    f"on branch {state.publish_result.branch_name}."
-                ),
+                message=_publish_notice_message(state.publish_result),
             )
         )
     return notices
@@ -341,6 +338,18 @@ def _publish_message(publish_result: RepositoryPublishResult) -> str:
     if publish_result.branch_name:
         return f"{publish_result.message} Branch: {publish_result.branch_name}"
     return publish_result.message
+
+
+def _publish_notice_message(publish_result: RepositoryPublishResult) -> str:
+    if publish_result.status == "initialized":
+        return (
+            f"Generated code initialized {publish_result.repository} "
+            f"on branch {publish_result.branch_name}."
+        )
+    return (
+        f"Generated code pushed to {publish_result.repository} "
+        f"on branch {publish_result.branch_name}."
+    )
 
 
 def _validated_playwright_command(command: list[str]) -> list[str]:
