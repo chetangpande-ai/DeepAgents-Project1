@@ -56,6 +56,26 @@ def render_markdown_report(state: GeneratorState) -> str:
         lines.append(f"- `{artifact.path}` ({artifact.artifact_type})")
     lines.append("")
 
+    if state.publish_result:
+        lines.extend(
+            [
+                "## Repository Publish",
+                "",
+                f"- Status: `{state.publish_result.status}`",
+                f"- Repository: `{state.publish_result.repository}`",
+                f"- Branch: `{state.publish_result.branch_name}`",
+                f"- Commit: `{state.publish_result.commit_sha}`",
+                f"- Pull request: `{state.publish_result.pull_request_url}`",
+                f"- Message: {state.publish_result.message}",
+            ]
+        )
+        if state.publish_result.written_paths:
+            lines.append("- Written paths:")
+            lines.extend(f"  - `{path}`" for path in state.publish_result.written_paths)
+        if state.publish_result.errors:
+            lines.append(f"- Errors: {', '.join(state.publish_result.errors)}")
+        lines.append("")
+
     if state.validation_result:
         lines.extend(
             [

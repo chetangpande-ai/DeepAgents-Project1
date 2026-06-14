@@ -10,7 +10,8 @@ Current implementation focuses on the safe v1 foundation:
 - Playwright codegen recording requests for clear web cases with missing UI steps
 - API evidence checks for Swagger/OpenAPI, Bruno, or explicit endpoint/payload details
 - DB evidence checks for connection profile, query, query parameters, and validation points
-- dry-run reports under `.tsg-runs/`
+- run reports under `.tsg-runs/`
+- optional GitHub branch push and PR creation against the repo configured in `.env`
 
 ## Flow
 
@@ -46,8 +47,8 @@ flowchart TD
     Q --> R[Maven Validation<br/>compile or targeted run]
     R -->|Failure| S[Repair Loop]
     S --> Q
-    R -->|Pass or dry-run report| T[Package Run Artifacts]
-    T --> U[Optional GitHub Branch + PR<br/>disabled by default]
+    R -->|Pass, skipped, or dry run| T[Package Run Artifacts]
+    T --> U[GitHub Branch Push + Optional PR<br/>configured by .env]
 ```
 
 ## Deep Agent Workflow
@@ -78,8 +79,8 @@ flowchart LR
     N --> O[Maven Validator]
     O -->|Compile or binding failure| P[Repair Agent]
     P --> M
-    O -->|Pass or dry run| Q[Report Packager]
-    Q --> R[Optional GitHub PR Publisher]
+    O -->|Pass, skipped, or dry run| Q[Report Packager]
+    Q --> R[GitHub Branch Publisher<br/>optional PR]
 ```
 
 ## Setup
@@ -99,12 +100,23 @@ MESH_MODEL=
 GitHub PR settings are:
 
 ```env
+DRY_RUN=false
+ALLOW_REPO_WRITES=true
+ALLOW_PR_CREATION=true
 GIT_PROVIDER=github
 GITHUB_OWNER=your-github-org-or-user
 GITHUB_REPOSITORY=your-repo
 GITHUB_TOKEN=
 GITHUB_API_URL=https://api.github.com
+GIT_BASE_BRANCH=main
+GIT_WORK_BRANCH_PREFIX=ai/generated-tests
 ```
+
+Generated Java artifacts are written to the GitHub repository configured by
+`GITHUB_OWNER` and `GITHUB_REPOSITORY`. The workflow creates a new branch using
+`GIT_WORK_BRANCH_PREFIX`, pushes that branch, and creates a pull request when
+`ALLOW_PR_CREATION=true`. Keep `DRY_RUN=true` when you only want local run
+artifacts and no repository push.
 
 ## Run
 
@@ -144,6 +156,7 @@ The command writes a run folder with:
 - `api-evidence.json`
 - `db-evidence.json`
 - `generated-artifacts.json`
+- `publish-result.json`
 
 ## Behavior
 

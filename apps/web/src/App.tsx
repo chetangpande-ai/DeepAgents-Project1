@@ -59,6 +59,20 @@ type WebRecordingEvidence = {
   command: string[]
 }
 
+type RepositoryPublishResult = {
+  status: 'skipped' | 'prepared' | 'pushed' | 'pr_created' | 'failed' | 'no_changes'
+  provider: string
+  repository?: string | null
+  repo_path?: string | null
+  branch_name?: string | null
+  base_branch?: string | null
+  commit_sha?: string | null
+  pull_request_url?: string | null
+  written_paths: string[]
+  message: string
+  errors: string[]
+}
+
 type GenerateResponse = {
   run_dir: string
   report_path: string | null
@@ -73,6 +87,7 @@ type GenerateResponse = {
     skipped: boolean
     errors: string[]
   } | null
+  publish_result?: RepositoryPublishResult | null
 }
 
 type FormState = {
@@ -480,6 +495,8 @@ function App() {
             recordings={response?.web_recordings ?? []}
           />
 
+          <PublishResult publishResult={response?.publish_result ?? null} />
+
           <section className="output-panel">
             <div className="output-header">
               <SectionTitle icon={<Code2 size={18} />} title="Generated Output" />
@@ -605,7 +622,6 @@ function buildRequest(form: FormState) {
 
   return {
     framework_profile: form.framework,
-    dry_run: true,
     test_case: testCase,
   }
 }
@@ -780,6 +796,67 @@ function RecordingTasks({
         })}
       </div>
     </section>
+  )
+}
+
+function PublishResult({ publishResult }: { publishResult: RepositoryPublishResult | null }) {
+  if (!publishResult) {
+    return null
+  }
+
+  const statusLabel = publishResult.status.replace('_', ' ')
+  return (
+    <section className={`publish-panel ${publishResult.status}`}>
+      <SectionTitle icon={<GitPullRequest size={18} />} title="Repository Publish" />
+      <div className="publish-summary">
+        <span>{statusLabel}</span>
+        <p>{publishResult.message}</p>
+      </div>
+      <div className="publish-grid">
+        <PublishField label="Repository" value={publishResult.repository} />
+        <PublishField label="Branch" value={publishResult.branch_name} />
+        <PublishField label="Commit" value={publishResult.commit_sha} />
+        <PublishField label="Pull request" value={publishResult.pull_request_url} isLink />
+      </div>
+      {publishResult.written_paths.length > 0 && (
+        <div className="written-paths">
+          <span>Generated files</span>
+          {publishResult.written_paths.map((path) => (
+            <code key={path}>{path}</code>
+          ))}
+        </div>
+      )}
+      {publishResult.errors.length > 0 && (
+        <div className="publish-errors">
+          {publishResult.errors.map((error) => (
+            <p key={error}>{error}</p>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function PublishField({
+  isLink = false,
+  label,
+  value,
+}: {
+  isLink?: boolean
+  label: string
+  value?: string | null
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      {isLink && value ? (
+        <a href={value} rel="noreferrer" target="_blank">
+          {value}
+        </a>
+      ) : (
+        <code>{value || 'not available'}</code>
+      )}
+    </div>
   )
 }
 

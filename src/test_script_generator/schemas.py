@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 FrameworkProfile = Literal["java-testng-maven", "java-bdd-maven"]
 AutomationLayer = Literal["ui", "api", "db", "hybrid"]
 ActionabilityStatus = Literal["ready", "partial", "blocked"]
+PublishStatus = Literal["skipped", "prepared", "pushed", "pr_created", "failed", "no_changes"]
 
 
 class TestStep(BaseModel):
@@ -157,6 +158,20 @@ class ValidationResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class RepositoryPublishResult(BaseModel):
+    status: PublishStatus
+    provider: str = "github"
+    repository: str | None = None
+    repo_path: str | None = None
+    branch_name: str | None = None
+    base_branch: str | None = None
+    commit_sha: str | None = None
+    pull_request_url: str | None = None
+    written_paths: list[str] = Field(default_factory=list)
+    message: str
+    errors: list[str] = Field(default_factory=list)
+
+
 class GenerationPlan(BaseModel):
     planned_test_case_ids: list[str] = Field(default_factory=list)
     blocked_test_case_ids: list[str] = Field(default_factory=list)
@@ -180,6 +195,7 @@ class GeneratorState(BaseModel):
     generation_plan: GenerationPlan = Field(default_factory=GenerationPlan)
     artifacts: list[GeneratedArtifact] = Field(default_factory=list)
     validation_result: ValidationResult | None = None
+    publish_result: RepositoryPublishResult | None = None
     repair_attempts: int = 0
     blockers: list[str] = Field(default_factory=list)
     final_report_path: Path | None = None

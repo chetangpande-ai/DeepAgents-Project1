@@ -6,6 +6,10 @@ from langgraph.graph import END, StateGraph
 from test_script_generator.adapters.api_evidence import extract_api_evidence
 from test_script_generator.adapters.db_evidence import extract_db_evidence
 from test_script_generator.adapters.filesystem import write_json, write_text
+from test_script_generator.adapters.github_publish import (
+    prepare_generated_artifacts_for_publish,
+    push_prepared_artifacts,
+)
 from test_script_generator.adapters.github_repo import resolve_automation_repo
 from test_script_generator.adapters.manual_input import load_test_cases
 from test_script_generator.adapters.maven import validate_maven_compile
@@ -41,10 +45,11 @@ def build_graph(settings: Settings):
     workflow.add_node("create_generation_plan", lambda state: _plan(state))
     workflow.add_node("generate_scripts", lambda state: _generate(state))
     workflow.add_node("self_review_artifacts", lambda state: _review(state))
-    workflow.add_node("write_artifacts", lambda state: _write_artifacts(state))
+    workflow.add_node("write_artifacts", lambda state: _write_artifacts(state, settings))
     workflow.add_node("validate_with_maven", lambda state: _validate(state, settings))
     workflow.add_node("package_final_report", lambda state: _package(state))
-    workflow.add_node("create_pull_request", lambda state: state)
+    workflow.add_node("publish_generated_code", lambda state: _publish(state, settings))
+    workflow.add_node("refresh_final_report", lambda state: _package(state))
 
     workflow.set_entry_point("load_manual_test_cases")
     workflow.add_edge("load_manual_test_cases", "classify_framework_profile")
@@ -68,10 +73,11 @@ def build_graph(settings: Settings):
     workflow.add_edge("validate_with_maven", "package_final_report")
     workflow.add_conditional_edges(
         "package_final_report",
-        lambda state: "pr" if settings.allow_pr_creation else "end",
-        {"pr": "create_pull_request", "end": END},
+        _route_after_package,
+        {"publish": "publish_generated_code", "end": END},
     )
-    workflow.add_edge("create_pull_request", END)
+    workflow.add_edge("publish_generated_code", "refresh_final_report")
+    workflow.add_edge("refresh_final_report", END)
     return workflow.compile()
 
 
@@ -174,7 +180,7 @@ def _review(state: GeneratorState) -> dict[str, Any]:
     return {"blockers": state.blockers + warnings}
 
 
-def _write_artifacts(state: GeneratorState) -> dict[str, Any]:
+def _write_artifacts(state: GeneratorState, settings: Settings) -> dict[str, Any]:
     run_dir = _require_run_dir(state)
     write_json(run_dir / "input-test-cases.json", state.test_cases)
     write_json(run_dir / "actionability-assessments.json", state.actionability_assessments)
@@ -184,7 +190,16 @@ def _write_artifacts(state: GeneratorState) -> dict[str, Any]:
     write_json(run_dir / "api-evidence.json", state.api_evidence)
     write_json(run_dir / "db-evidence.json", state.db_evidence)
     write_json(run_dir / "web-recordings.json", state.web_recordings)
-    return {}
+
+    repo_path = Path(state.repo_profile.root_path) if state.repo_profile else settings.automation_repo_path
+    publish_result = prepare_generated_artifacts_for_publish(
+        repo_path,
+        state.artifacts,
+        settings,
+        state.generation_plan.planned_test_case_ids,
+    )
+    write_json(run_dir / "publish-result.json", publish_result)
+    return {"publish_result": publish_result}
 
 
 def _validate(state: GeneratorState, settings: Settings) -> dict[str, Any]:
@@ -200,6 +215,36 @@ def _package(state: GeneratorState) -> dict[str, Any]:
     write_text(report_path, report)
     write_json(run_dir / "final-state.json", state)
     return {"final_report_path": report_path}
+
+
+def _route_after_package(state: GeneratorState) -> str:
+    if state.publish_result and state.publish_result.status == "prepared":
+        return "publish"
+    return "end"
+
+
+def _publish(state: GeneratorState, settings: Settings) -> dict[str, Any]:
+    repo_path = Path(state.repo_profile.root_path) if state.repo_profile else settings.automation_repo_path
+    if state.validation_result and not state.validation_result.skipped and not state.validation_result.passed:
+        if not state.publish_result:
+            return {}
+        publish_result = state.publish_result.model_copy(
+            update={
+                "status": "failed",
+                "message": "Maven validation failed, so generated code was not pushed.",
+                "errors": state.publish_result.errors + state.validation_result.errors,
+            }
+        )
+    else:
+        publish_result = push_prepared_artifacts(
+            repo_path,
+            state.publish_result,
+            settings,
+            render_markdown_report(state),
+        )
+    run_dir = _require_run_dir(state)
+    write_json(run_dir / "publish-result.json", publish_result)
+    return {"publish_result": publish_result}
 
 
 def _require_run_dir(state: GeneratorState) -> Path:

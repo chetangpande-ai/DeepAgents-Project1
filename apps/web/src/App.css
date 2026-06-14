@@ -87,7 +87,8 @@ h2 {
 .result-section,
 .output-panel,
 .evidence-block,
-.recording-panel {
+.recording-panel,
+.publish-panel {
   border: 1px solid #dfe5ee;
   border-radius: 8px;
   background: #ffffff;
@@ -116,7 +117,8 @@ h2 {
 .result-section,
 .output-panel,
 .evidence-block,
-.recording-panel {
+.recording-panel,
+.publish-panel {
   padding: 14px;
 }
 
@@ -430,6 +432,96 @@ button:focus-visible {
   font-weight: 700;
 }
 
+.publish-panel.pushed,
+.publish-panel.pr_created {
+  border-left: 4px solid #1f9d63;
+}
+
+.publish-panel.failed {
+  border-left: 4px solid #cf3b37;
+}
+
+.publish-panel.skipped,
+.publish-panel.no_changes {
+  border-left: 4px solid #8a97aa;
+}
+
+.publish-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.publish-summary span {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #eef2f7;
+  color: #263a57;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.publish-summary p {
+  color: #53627a;
+  font-size: 13px;
+}
+
+.publish-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.publish-grid div,
+.written-paths {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.publish-grid span,
+.written-paths span {
+  color: #53627a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.publish-grid code,
+.written-paths code,
+.publish-grid a {
+  overflow-wrap: anywhere;
+  border-radius: 5px;
+  padding: 7px;
+  background: #eef2f7;
+  color: #263a57;
+  font-size: 12px;
+}
+
+.publish-grid a {
+  color: #174ea6;
+}
+
+.written-paths {
+  margin-top: 12px;
+}
+
+.publish-errors {
+  margin-top: 12px;
+  border: 1px solid #efb1ad;
+  border-radius: 7px;
+  padding: 10px;
+  background: #fff3f2;
+  color: #9f211d;
+  font-size: 13px;
+}
+
+.publish-errors p + p {
+  margin-top: 6px;
+}
+
 .tab-row {
   gap: 6px;
 }
@@ -545,7 +637,8 @@ code {
 
   .field-grid.two,
   .step-row,
-  .recording-path-grid {
+  .recording-path-grid,
+  .publish-grid {
     grid-template-columns: 1fr;
   }
 

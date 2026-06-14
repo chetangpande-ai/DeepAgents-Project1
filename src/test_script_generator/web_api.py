@@ -18,6 +18,7 @@ from test_script_generator.schemas import (
     FrameworkProfile,
     GeneratedArtifact,
     GeneratorState,
+    RepositoryPublishResult,
     SourceTestCase,
     ValidationResult,
     WebRecordingEvidence,
@@ -47,7 +48,7 @@ class GenerateRequest(BaseModel):
     test_case: SourceTestCase
     framework_profile: FrameworkProfile = "java-bdd-maven"
     automation_repo_path: str | None = None
-    dry_run: bool = True
+    dry_run: bool | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -60,6 +61,7 @@ class GenerateResponse(BaseModel):
     web_recordings: list[WebRecordingEvidence]
     generated_artifacts: list[GeneratedArtifact]
     validation_result: ValidationResult | None
+    publish_result: RepositoryPublishResult | None
 
 
 class StartRecordingRequest(BaseModel):
@@ -91,7 +93,8 @@ def health() -> dict[str, str]:
 def generate(request: GenerateRequest) -> GenerateResponse:
     settings = Settings()
     settings.default_framework_profile = request.framework_profile
-    settings.dry_run = request.dry_run
+    if request.dry_run is not None:
+        settings.dry_run = request.dry_run
     if request.automation_repo_path:
         settings.automation_repo_path = Path(request.automation_repo_path)
 
@@ -114,6 +117,7 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         web_recordings=result.web_recordings,
         generated_artifacts=result.artifacts,
         validation_result=result.validation_result,
+        publish_result=result.publish_result,
     )
 
 
@@ -234,6 +238,22 @@ def _build_stage_logs(state: GeneratorState) -> list[StageLog]:
             )
         )
 
+    if state.publish_result:
+        publish_status: Literal["complete", "warning", "blocked", "skipped"]
+        if state.publish_result.status in {"pushed", "pr_created", "prepared"}:
+            publish_status = "complete"
+        elif state.publish_result.status in {"skipped", "no_changes"}:
+            publish_status = "skipped"
+        else:
+            publish_status = "blocked"
+        logs.append(
+            StageLog(
+                stage="Repository publish",
+                status=publish_status,
+                message=_publish_message(state.publish_result),
+            )
+        )
+
     logs.append(
         StageLog(
             stage="Report",
@@ -275,7 +295,29 @@ def _build_approval_notices(state: GeneratorState) -> list[ApprovalNotice]:
                 kind="review",
                 severity="info",
                 title="Manual review required",
-                message="Review generated artifacts before enabling repo writes or PR creation.",
+                message="Review generated artifacts and repository branch before merging.",
+            )
+        )
+    if state.publish_result and state.publish_result.status == "pr_created":
+        notices.append(
+            ApprovalNotice(
+                kind="pr",
+                severity="info",
+                title="Pull request created",
+                message=state.publish_result.pull_request_url
+                or "Generated code pull request was created.",
+            )
+        )
+    elif state.publish_result and state.publish_result.status == "pushed":
+        notices.append(
+            ApprovalNotice(
+                kind="pr",
+                severity="info",
+                title="Branch pushed",
+                message=(
+                    f"Generated code pushed to {state.publish_result.repository} "
+                    f"on branch {state.publish_result.branch_name}."
+                ),
             )
         )
     return notices
@@ -287,6 +329,14 @@ def _assessment_message(assessment) -> str:
     if assessment.requires_web_recording:
         return assessment.recording_reason or "Playwright recording required."
     return "Ready for generation."
+
+
+def _publish_message(publish_result: RepositoryPublishResult) -> str:
+    if publish_result.pull_request_url:
+        return f"{publish_result.message} {publish_result.pull_request_url}"
+    if publish_result.branch_name:
+        return f"{publish_result.message} Branch: {publish_result.branch_name}"
+    return publish_result.message
 
 
 def _validated_playwright_command(command: list[str]) -> list[str]:
