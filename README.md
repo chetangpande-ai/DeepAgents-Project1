@@ -152,6 +152,66 @@ http://127.0.0.1:5173
 
 The UI calls the API at `http://127.0.0.1:8001` by default. Override it with `VITE_API_BASE_URL` if needed.
 
+The UI supports two input modes:
+
+- **Form**: manual fields for testcase, Web/API/DB evidence, and steps.
+- **JSON**: paste JSON directly or upload a `.json` file.
+
+JSON mode accepts either a raw testcase object:
+
+```json
+{
+  "source_id": "TC_API_001",
+  "title": "Create order API rejects invalid coupon",
+  "automation_layers": ["api"],
+  "api": {
+    "endpoint": "/api/orders",
+    "method": "POST",
+    "request_payload": {
+      "couponCode": "INVALID"
+    },
+    "expected_status": 400,
+    "expected_response_points": ["error.code == INVALID_COUPON"]
+  },
+  "steps": [
+    {
+      "step_number": 1,
+      "action": "Submit create order API request with invalid coupon.",
+      "expected_result": "API returns invalid coupon error."
+    }
+  ]
+}
+```
+
+Or the API request wrapper:
+
+```json
+{
+  "framework_profile": "java-bdd-maven",
+  "test_case": {
+    "source_id": "TC_API_001",
+    "title": "Create order API rejects invalid coupon",
+    "automation_layers": ["api"],
+    "api": {
+      "endpoint": "/api/orders",
+      "method": "POST",
+      "request_payload": {
+        "couponCode": "INVALID"
+      },
+      "expected_status": 400,
+      "expected_response_points": ["error.code == INVALID_COUPON"]
+    },
+    "steps": [
+      {
+        "step_number": 1,
+        "action": "Submit create order API request with invalid coupon.",
+        "expected_result": "API returns invalid coupon error."
+      }
+    ]
+  }
+}
+```
+
 The command writes a run folder with:
 
 - `final-report.md`

@@ -137,6 +137,32 @@ h2 {
   grid-template-columns: 1fr 1fr;
 }
 
+.input-mode-row {
+  display: inline-flex;
+  width: fit-content;
+  gap: 4px;
+  border: 1px solid #cfd8e6;
+  border-radius: 7px;
+  padding: 3px;
+  background: #f5f8fc;
+}
+
+.mode-tab {
+  border: 0;
+  border-radius: 5px;
+  padding: 7px 13px;
+  background: transparent;
+  color: #45546d;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.mode-tab.active {
+  background: #ffffff;
+  color: #174ea6;
+  box-shadow: 0 1px 4px rgba(23, 32, 51, 0.12);
+}
+
 label {
   display: flex;
   flex-direction: column;
@@ -178,7 +204,8 @@ button:focus-visible {
 .layer-toggle,
 .tab,
 .secondary-button,
-.icon-button {
+.icon-button,
+.file-picker {
   border: 1px solid #cfd8e6;
   border-radius: 6px;
   background: #ffffff;
@@ -208,6 +235,51 @@ button:focus-visible {
 
 .checkbox-line input {
   width: auto;
+}
+
+.json-input-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.json-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.file-picker {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  padding: 7px 10px;
+}
+
+.file-picker input {
+  width: 220px;
+  padding: 0;
+  border: 0;
+  font-size: 12px;
+}
+
+.json-textarea {
+  min-height: 360px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.json-status {
+  border-radius: 7px;
+  padding: 10px;
+  background: #eef4ff;
+  color: #174ea6;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .steps-header,

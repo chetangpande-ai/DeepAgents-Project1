@@ -13,6 +13,7 @@ import {
   Play,
   Server,
   Terminal,
+  Upload,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
@@ -98,6 +99,13 @@ type GenerateResponse = {
   publish_result?: RepositoryPublishResult | null
 }
 
+type GenerateRequestBody = {
+  framework_profile: FrameworkProfile
+  automation_repo_path?: string | null
+  dry_run?: boolean | null
+  test_case: Record<string, unknown>
+}
+
 type FormState = {
   sourceId: string
   title: string
@@ -156,8 +164,40 @@ const defaultForm: FormState = {
   ],
 }
 
+const defaultJsonText = JSON.stringify(
+  {
+    framework_profile: 'java-bdd-maven',
+    test_case: {
+      source_id: 'TC_API_001',
+      title: 'Create order API rejects invalid coupon',
+      automation_layers: ['api'],
+      api: {
+        endpoint: '/api/orders',
+        method: 'POST',
+        request_payload: {
+          couponCode: 'INVALID',
+        },
+        expected_status: 400,
+        expected_response_points: ['error.code == INVALID_COUPON'],
+      },
+      steps: [
+        {
+          step_number: 1,
+          action: 'Submit create order API request with invalid coupon.',
+          expected_result: 'API returns invalid coupon error.',
+        },
+      ],
+    },
+  },
+  null,
+  2,
+)
+
 function App() {
   const [form, setForm] = useState<FormState>(defaultForm)
+  const [inputMode, setInputMode] = useState<'form' | 'json'>('form')
+  const [jsonText, setJsonText] = useState(defaultJsonText)
+  const [jsonStatus, setJsonStatus] = useState<string | null>(null)
   const [response, setResponse] = useState<GenerateResponse | null>(null)
   const [isRunning, setIsRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -168,6 +208,20 @@ function App() {
   const statusSummary = useMemo(() => summarize(response), [response])
 
   async function submit(targetForm = form) {
+    await submitRequest(buildRequest(targetForm))
+  }
+
+  async function submitJson() {
+    try {
+      const request = parseJsonRequest(jsonText, form.framework)
+      setJsonStatus(`Ready to generate ${String(request.test_case.source_id)}.`)
+      await submitRequest(request)
+    } catch (caught) {
+      setJsonStatus(caught instanceof Error ? caught.message : 'JSON input is invalid.')
+    }
+  }
+
+  async function submitRequest(requestBody: GenerateRequestBody) {
     setIsRunning(true)
     setError(null)
     setResponse(null)
@@ -175,7 +229,7 @@ function App() {
       const result = await fetch(`${API_BASE_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildRequest(targetForm)),
+        body: JSON.stringify(requestBody),
       })
       if (!result.ok) {
         const text = await result.text()
@@ -187,6 +241,26 @@ function App() {
     } finally {
       setIsRunning(false)
     }
+  }
+
+  function importJsonToForm() {
+    try {
+      const request = parseJsonRequest(jsonText, form.framework)
+      setForm(jsonRequestToFormState(request))
+      setJsonStatus(`Loaded ${String(request.test_case.source_id)} into the form.`)
+      setInputMode('form')
+    } catch (caught) {
+      setJsonStatus(caught instanceof Error ? caught.message : 'JSON input is invalid.')
+    }
+  }
+
+  async function uploadJsonFile(file: File | null) {
+    if (!file) {
+      return
+    }
+    const text = await file.text()
+    setJsonText(text)
+    setJsonStatus(`Loaded ${file.name}.`)
   }
 
   async function startRecording(recording: WebRecordingEvidence) {
@@ -256,215 +330,46 @@ function App() {
 
       <section className="workspace-grid">
         <section className="input-panel" aria-label="Testcase input">
-          <SectionTitle icon={<ClipboardList size={18} />} title="Testcase Details" />
-          <div className="field-grid two">
-            <label>
-              Testcase ID
-              <input
-                value={form.sourceId}
-                onChange={(event) => update('sourceId', event.target.value)}
-              />
-            </label>
-            <label>
-              Framework
-              <select
-                value={form.framework}
-                onChange={(event) => update('framework', event.target.value as FrameworkProfile)}
-              >
-                <option value="java-bdd-maven">Cucumber JUnit Maven</option>
-                <option value="java-testng-maven">TestNG Maven</option>
-              </select>
-            </label>
-          </div>
-
-          <label>
-            Title
-            <input value={form.title} onChange={(event) => update('title', event.target.value)} />
-          </label>
-
-          <label>
-            Description
-            <textarea
-              rows={3}
-              value={form.description}
-              onChange={(event) => update('description', event.target.value)}
-            />
-          </label>
-
-          <div className="layer-row" aria-label="Automation layers">
-            <LayerToggle
-              active={layers.has('ui')}
-              icon={<Globe2 size={16} />}
-              label="Web"
-              onClick={() => toggleLayer('ui')}
-            />
-            <LayerToggle
-              active={layers.has('api')}
-              icon={<Server size={16} />}
-              label="API"
-              onClick={() => toggleLayer('api')}
-            />
-            <LayerToggle
-              active={layers.has('db')}
-              icon={<Database size={16} />}
-              label="DB"
-              onClick={() => toggleLayer('db')}
-            />
-          </div>
-
-          {layers.has('ui') && (
-            <EvidenceBlock title="Web Evidence" icon={<Globe2 size={17} />}>
-              <label>
-                Application URL
-                <input
-                  value={form.webAppUrl}
-                  onChange={(event) => update('webAppUrl', event.target.value)}
-                  placeholder="https://test.example.com"
-                />
-              </label>
-              <label className="checkbox-line">
-                <input
-                  type="checkbox"
-                  checked={form.webRecordMissingSteps}
-                  onChange={(event) => update('webRecordMissingSteps', event.target.checked)}
-                />
-                Route missing web steps to Playwright codegen
-              </label>
-              <label>
-                Recorded Playwright script path
-                <input
-                  value={form.webRecordingScriptPath}
-                  onChange={(event) => update('webRecordingScriptPath', event.target.value)}
-                  placeholder=".tsg-runs/.../recordings/TC_001/playwright-codegen.java"
-                />
-              </label>
-            </EvidenceBlock>
-          )}
-
-          {layers.has('api') && (
-            <EvidenceBlock title="API Evidence" icon={<Server size={17} />}>
-              <div className="field-grid two">
-                <label>
-                  Endpoint
-                  <input
-                    value={form.apiEndpoint}
-                    onChange={(event) => update('apiEndpoint', event.target.value)}
-                    placeholder="/api/orders"
-                  />
-                </label>
-                <label>
-                  Method
-                  <select
-                    value={form.apiMethod}
-                    onChange={(event) => update('apiMethod', event.target.value)}
-                  >
-                    <option>GET</option>
-                    <option>POST</option>
-                    <option>PUT</option>
-                    <option>PATCH</option>
-                    <option>DELETE</option>
-                  </select>
-                </label>
-              </div>
-              <label>
-                Request payload
-                <textarea
-                  rows={4}
-                  value={form.apiPayload}
-                  onChange={(event) => update('apiPayload', event.target.value)}
-                />
-              </label>
-              <div className="field-grid two">
-                <label>
-                  Expected status
-                  <input
-                    value={form.apiExpectedStatus}
-                    onChange={(event) => update('apiExpectedStatus', event.target.value)}
-                  />
-                </label>
-                <label>
-                  Response validations
-                  <input
-                    value={form.apiValidationPoints}
-                    onChange={(event) => update('apiValidationPoints', event.target.value)}
-                    placeholder="error.code == INVALID_COUPON"
-                  />
-                </label>
-              </div>
-            </EvidenceBlock>
-          )}
-
-          {layers.has('db') && (
-            <EvidenceBlock title="DB Evidence" icon={<Database size={17} />}>
-              <label>
-                Connection profile
-                <input
-                  value={form.dbConnectionProfile}
-                  onChange={(event) => update('dbConnectionProfile', event.target.value)}
-                  placeholder="orders-readonly"
-                />
-              </label>
-              <label>
-                Query
-                <textarea
-                  rows={3}
-                  value={form.dbQuery}
-                  onChange={(event) => update('dbQuery', event.target.value)}
-                />
-              </label>
-              <label>
-                Validation points
-                <textarea
-                  rows={3}
-                  value={form.dbValidationPoints}
-                  onChange={(event) => update('dbValidationPoints', event.target.value)}
-                />
-              </label>
-            </EvidenceBlock>
-          )}
-
-          <div className="steps-header">
-            <SectionTitle icon={<FileText size={18} />} title="Steps and Expected Results" />
-            <button type="button" className="secondary-button" onClick={addStep}>
-              Add Step
+          <div className="input-mode-row" role="tablist" aria-label="Input mode">
+            <button
+              type="button"
+              className={inputMode === 'form' ? 'mode-tab active' : 'mode-tab'}
+              onClick={() => setInputMode('form')}
+            >
+              Form
+            </button>
+            <button
+              type="button"
+              className={inputMode === 'json' ? 'mode-tab active' : 'mode-tab'}
+              onClick={() => setInputMode('json')}
+            >
+              JSON
             </button>
           </div>
 
-          <div className="steps-list">
-            {form.steps.map((step, index) => (
-              <div className="step-row" key={step.step_number}>
-                <span className="step-number">{index + 1}</span>
-                <label>
-                  Action
-                  <input
-                    value={step.action}
-                    onChange={(event) => updateStep(index, 'action', event.target.value)}
-                  />
-                </label>
-                <label>
-                  Expected result
-                  <input
-                    value={step.expected_result}
-                    onChange={(event) => updateStep(index, 'expected_result', event.target.value)}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="icon-button"
-                  title="Remove step"
-                  onClick={() => removeStep(index)}
-                  disabled={form.steps.length === 1}
-                >
-                  x
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <button type="button" className="primary-button" onClick={() => void submit()} disabled={isRunning}>
-            {isRunning ? <Loader2 className="spin" size={18} /> : <Play size={18} />}
-            {isRunning ? 'Running generator' : 'Generate Automation Plan'}
-          </button>
+          {inputMode === 'form' ? (
+            <FormInput
+              addStep={addStep}
+              form={form}
+              isRunning={isRunning}
+              layers={layers}
+              removeStep={removeStep}
+              submit={() => void submit()}
+              toggleLayer={toggleLayer}
+              update={update}
+              updateStep={updateStep}
+            />
+          ) : (
+            <JsonInput
+              importToForm={importJsonToForm}
+              isRunning={isRunning}
+              jsonStatus={jsonStatus}
+              jsonText={jsonText}
+              setJsonText={setJsonText}
+              submitJson={() => void submitJson()}
+              uploadJsonFile={(file) => void uploadJsonFile(file)}
+            />
+          )}
           {error && <div className="error-box">{error}</div>}
         </section>
 
@@ -590,6 +495,264 @@ function App() {
 }
 
 function buildRequest(form: FormState) {
+  const testCase = buildTestCaseFromForm(form)
+
+  return {
+    framework_profile: form.framework,
+    test_case: testCase,
+  }
+}
+
+function FormInput({
+  addStep,
+  form,
+  isRunning,
+  layers,
+  removeStep,
+  submit,
+  toggleLayer,
+  update,
+  updateStep,
+}: {
+  addStep: () => void
+  form: FormState
+  isRunning: boolean
+  layers: Set<AutomationLayer>
+  removeStep: (index: number) => void
+  submit: () => void
+  toggleLayer: (layer: AutomationLayer) => void
+  update: <K extends keyof FormState>(key: K, value: FormState[K]) => void
+  updateStep: (index: number, key: keyof TestStep, value: string) => void
+}) {
+  return (
+    <>
+      <SectionTitle icon={<ClipboardList size={18} />} title="Testcase Details" />
+      <div className="field-grid two">
+        <label>
+          Testcase ID
+          <input value={form.sourceId} onChange={(event) => update('sourceId', event.target.value)} />
+        </label>
+        <label>
+          Framework
+          <select
+            value={form.framework}
+            onChange={(event) => update('framework', event.target.value as FrameworkProfile)}
+          >
+            <option value="java-bdd-maven">Cucumber JUnit Maven</option>
+            <option value="java-testng-maven">TestNG Maven</option>
+          </select>
+        </label>
+      </div>
+
+      <label>
+        Title
+        <input value={form.title} onChange={(event) => update('title', event.target.value)} />
+      </label>
+
+      <label>
+        Description
+        <textarea rows={3} value={form.description} onChange={(event) => update('description', event.target.value)} />
+      </label>
+
+      <div className="layer-row" aria-label="Automation layers">
+        <LayerToggle active={layers.has('ui')} icon={<Globe2 size={16} />} label="Web" onClick={() => toggleLayer('ui')} />
+        <LayerToggle active={layers.has('api')} icon={<Server size={16} />} label="API" onClick={() => toggleLayer('api')} />
+        <LayerToggle active={layers.has('db')} icon={<Database size={16} />} label="DB" onClick={() => toggleLayer('db')} />
+      </div>
+
+      {layers.has('ui') && (
+        <EvidenceBlock title="Web Evidence" icon={<Globe2 size={17} />}>
+          <label>
+            Application URL
+            <input
+              value={form.webAppUrl}
+              onChange={(event) => update('webAppUrl', event.target.value)}
+              placeholder="https://test.example.com"
+            />
+          </label>
+          <label className="checkbox-line">
+            <input
+              type="checkbox"
+              checked={form.webRecordMissingSteps}
+              onChange={(event) => update('webRecordMissingSteps', event.target.checked)}
+            />
+            Route missing web steps to Playwright codegen
+          </label>
+          <label>
+            Recorded Playwright script path
+            <input
+              value={form.webRecordingScriptPath}
+              onChange={(event) => update('webRecordingScriptPath', event.target.value)}
+              placeholder=".tsg-runs/.../recordings/TC_001/playwright-codegen.java"
+            />
+          </label>
+        </EvidenceBlock>
+      )}
+
+      {layers.has('api') && (
+        <EvidenceBlock title="API Evidence" icon={<Server size={17} />}>
+          <div className="field-grid two">
+            <label>
+              Endpoint
+              <input
+                value={form.apiEndpoint}
+                onChange={(event) => update('apiEndpoint', event.target.value)}
+                placeholder="/api/orders"
+              />
+            </label>
+            <label>
+              Method
+              <select value={form.apiMethod} onChange={(event) => update('apiMethod', event.target.value)}>
+                <option>GET</option>
+                <option>POST</option>
+                <option>PUT</option>
+                <option>PATCH</option>
+                <option>DELETE</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            Request payload
+            <textarea rows={4} value={form.apiPayload} onChange={(event) => update('apiPayload', event.target.value)} />
+          </label>
+          <div className="field-grid two">
+            <label>
+              Expected status
+              <input value={form.apiExpectedStatus} onChange={(event) => update('apiExpectedStatus', event.target.value)} />
+            </label>
+            <label>
+              Response validations
+              <input
+                value={form.apiValidationPoints}
+                onChange={(event) => update('apiValidationPoints', event.target.value)}
+                placeholder="error.code == INVALID_COUPON"
+              />
+            </label>
+          </div>
+        </EvidenceBlock>
+      )}
+
+      {layers.has('db') && (
+        <EvidenceBlock title="DB Evidence" icon={<Database size={17} />}>
+          <label>
+            Connection profile
+            <input
+              value={form.dbConnectionProfile}
+              onChange={(event) => update('dbConnectionProfile', event.target.value)}
+              placeholder="orders-readonly"
+            />
+          </label>
+          <label>
+            Query
+            <textarea rows={3} value={form.dbQuery} onChange={(event) => update('dbQuery', event.target.value)} />
+          </label>
+          <label>
+            Validation points
+            <textarea
+              rows={3}
+              value={form.dbValidationPoints}
+              onChange={(event) => update('dbValidationPoints', event.target.value)}
+            />
+          </label>
+        </EvidenceBlock>
+      )}
+
+      <div className="steps-header">
+        <SectionTitle icon={<FileText size={18} />} title="Steps and Expected Results" />
+        <button type="button" className="secondary-button" onClick={addStep}>
+          Add Step
+        </button>
+      </div>
+
+      <div className="steps-list">
+        {form.steps.map((step, index) => (
+          <div className="step-row" key={step.step_number}>
+            <span className="step-number">{index + 1}</span>
+            <label>
+              Action
+              <input value={step.action} onChange={(event) => updateStep(index, 'action', event.target.value)} />
+            </label>
+            <label>
+              Expected result
+              <input
+                value={step.expected_result}
+                onChange={(event) => updateStep(index, 'expected_result', event.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="icon-button"
+              title="Remove step"
+              onClick={() => removeStep(index)}
+              disabled={form.steps.length === 1}
+            >
+              x
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <button type="button" className="primary-button" onClick={submit} disabled={isRunning}>
+        {isRunning ? <Loader2 className="spin" size={18} /> : <Play size={18} />}
+        {isRunning ? 'Running generator' : 'Generate Automation Plan'}
+      </button>
+    </>
+  )
+}
+
+function JsonInput({
+  importToForm,
+  isRunning,
+  jsonStatus,
+  jsonText,
+  setJsonText,
+  submitJson,
+  uploadJsonFile,
+}: {
+  importToForm: () => void
+  isRunning: boolean
+  jsonStatus: string | null
+  jsonText: string
+  setJsonText: (value: string) => void
+  submitJson: () => void
+  uploadJsonFile: (file: File | null) => void
+}) {
+  return (
+    <section className="json-input-panel">
+      <SectionTitle icon={<Upload size={18} />} title="JSON Testcase Input" />
+      <div className="json-actions">
+        <label className="file-picker">
+          Upload JSON file
+          <input
+            accept=".json,application/json"
+            type="file"
+            onChange={(event) => uploadJsonFile(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        <button type="button" className="secondary-button" onClick={importToForm}>
+          Load into form
+        </button>
+      </div>
+      <label>
+        Testcase JSON
+        <textarea
+          className="json-textarea"
+          rows={18}
+          value={jsonText}
+          onChange={(event) => setJsonText(event.target.value)}
+          spellCheck={false}
+        />
+      </label>
+      {jsonStatus && <div className="json-status">{jsonStatus}</div>}
+      <button type="button" className="primary-button" onClick={submitJson} disabled={isRunning}>
+        {isRunning ? <Loader2 className="spin" size={18} /> : <Play size={18} />}
+        {isRunning ? 'Running generator' : 'Generate From JSON'}
+      </button>
+    </section>
+  )
+}
+
+function buildTestCaseFromForm(form: FormState) {
   const testCase: Record<string, unknown> = {
     source_id: form.sourceId,
     source_system: 'manual-ui',
@@ -628,10 +791,174 @@ function buildRequest(form: FormState) {
     }
   }
 
+  return testCase
+}
+
+function parseJsonRequest(value: string, fallbackFramework: FrameworkProfile): GenerateRequestBody {
+  const parsed: unknown = JSON.parse(value)
+  const payload = normalizeJsonPayload(parsed)
+  const framework = asFramework(payload.framework_profile) ?? fallbackFramework
+
   return {
-    framework_profile: form.framework,
-    test_case: testCase,
+    framework_profile: framework,
+    automation_repo_path: asOptionalString(payload.automation_repo_path),
+    dry_run: typeof payload.dry_run === 'boolean' ? payload.dry_run : undefined,
+    test_case: validateJsonTestCase(payload.test_case),
   }
+}
+
+function normalizeJsonPayload(value: unknown): Record<string, unknown> & { test_case: unknown } {
+  if (!isRecord(value)) {
+    throw new Error('JSON root must be an object.')
+  }
+  if ('test_case' in value) {
+    return { ...value, test_case: value.test_case }
+  }
+  if (Array.isArray(value.test_cases)) {
+    const firstCase = value.test_cases.find(isRecord)
+    if (!firstCase) {
+      throw new Error('test_cases must contain at least one testcase object.')
+    }
+    return { ...value, test_case: firstCase }
+  }
+  return { test_case: value }
+}
+
+function validateJsonTestCase(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error('test_case must be an object.')
+  }
+  if (!asOptionalString(value.source_id)) {
+    throw new Error('test_case.source_id is required.')
+  }
+  if (!asOptionalString(value.title)) {
+    throw new Error('test_case.title is required.')
+  }
+  if (!Array.isArray(value.steps) || value.steps.length === 0) {
+    throw new Error('test_case.steps must contain at least one step.')
+  }
+  return value
+}
+
+function jsonRequestToFormState(request: GenerateRequestBody): FormState {
+  const testCase = request.test_case
+  const api = isRecord(testCase.api) ? testCase.api : {}
+  const db = isRecord(testCase.db) ? testCase.db : {}
+  const web = isRecord(testCase.web) ? testCase.web : {}
+
+  return {
+    sourceId: asString(testCase.source_id, defaultForm.sourceId),
+    title: asString(testCase.title, defaultForm.title),
+    description: asString(testCase.description, ''),
+    framework: request.framework_profile,
+    layers: inferLayers(testCase),
+    webAppUrl: asString(web.app_url, ''),
+    webRecordMissingSteps: Boolean(web.record_missing_steps),
+    webRecordingScriptPath: asString(web.recording_script_path, ''),
+    apiEndpoint: asString(api.endpoint, ''),
+    apiMethod: asString(api.method, 'POST'),
+    apiPayload: stringifyJsonField(api.request_payload),
+    apiExpectedStatus: asString(api.expected_status, ''),
+    apiValidationPoints: arrayToLines(api.expected_response_points),
+    dbConnectionProfile: asString(db.connection_profile, ''),
+    dbQuery: asString(db.query, ''),
+    dbValidationPoints: arrayToLines(db.validation_points),
+    steps: stepsToFormState(testCase.steps),
+  }
+}
+
+function inferLayers(testCase: Record<string, unknown>): AutomationLayer[] {
+  const explicitLayers = Array.isArray(testCase.automation_layers) ? testCase.automation_layers : []
+  const layers = new Set<AutomationLayer>()
+  for (const layer of explicitLayers) {
+    if (layer === 'ui') {
+      layers.add('ui')
+    }
+    if (layer === 'api') {
+      layers.add('api')
+    }
+    if (layer === 'db') {
+      layers.add('db')
+    }
+  }
+  if (explicitLayers.includes('hybrid')) {
+    if (isRecord(testCase.web)) {
+      layers.add('ui')
+    }
+    if (isRecord(testCase.api)) {
+      layers.add('api')
+    }
+    if (isRecord(testCase.db)) {
+      layers.add('db')
+    }
+  }
+  if (!layers.size && isRecord(testCase.web)) {
+    layers.add('ui')
+  }
+  if (!layers.size && isRecord(testCase.api)) {
+    layers.add('api')
+  }
+  if (!layers.size && isRecord(testCase.db)) {
+    layers.add('db')
+  }
+  return layers.size ? Array.from(layers) : ['ui']
+}
+
+function stepsToFormState(value: unknown): TestStep[] {
+  if (!Array.isArray(value)) {
+    return defaultForm.steps
+  }
+  const steps = value.filter(isRecord).map((step, index) => ({
+    step_number: Number(step.step_number) || index + 1,
+    action: asString(step.action, ''),
+    expected_result: asString(step.expected_result, ''),
+  }))
+  return steps.length ? steps : defaultForm.steps
+}
+
+function arrayToLines(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).join('\n')
+  }
+  return asString(value, '')
+}
+
+function stringifyJsonField(value: unknown): string {
+  if (value === undefined || value === null) {
+    return ''
+  }
+  if (typeof value === 'string') {
+    return value
+  }
+  return JSON.stringify(value, null, 2)
+}
+
+function asFramework(value: unknown): FrameworkProfile | null {
+  if (value === 'java-bdd-maven' || value === 'java-testng-maven') {
+    return value
+  }
+  return null
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) {
+    return value
+  }
+  return undefined
+}
+
+function asString(value: unknown, fallback: string): string {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  return fallback
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function parseJson(value: string) {
