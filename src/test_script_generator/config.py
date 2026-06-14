@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
         alias="DB_CONNECTION_PROFILES_DIR",
     )
 
-    git_provider: str = Field(default="azure_repos", alias="GIT_PROVIDER")
+    git_provider: str = Field(default="github", alias="GIT_PROVIDER")
     git_remote_name: str = Field(default="origin", alias="GIT_REMOTE_NAME")
     git_base_branch: str = Field(default="main", alias="GIT_BASE_BRANCH")
     git_work_branch_prefix: str = Field(
@@ -85,19 +85,26 @@ class Settings(BaseSettings):
         alias="PR_TARGET_REVIEWERS",
     )
 
-    azure_repos_org_url: str | None = Field(
+    github_owner: str | None = Field(
         default=None,
-        alias="AZURE_REPOS_ORG_URL",
+        alias="GITHUB_OWNER",
     )
-    azure_repos_project: str | None = Field(
+    github_repository: str | None = Field(
         default=None,
-        alias="AZURE_REPOS_PROJECT",
+        alias="GITHUB_REPOSITORY",
     )
-    azure_repos_repository: str | None = Field(
+    github_token: str | None = Field(
         default=None,
-        alias="AZURE_REPOS_REPOSITORY",
+        alias="GITHUB_TOKEN",
     )
-    azure_repos_pat: str | None = Field(
-        default=None,
-        alias="AZURE_REPOS_PAT",
+    github_api_url: str = Field(
+        default="https://api.github.com",
+        alias="GITHUB_API_URL",
     )
+
+    @field_validator("playwright_storage_state_path", mode="before")
+    @classmethod
+    def blank_path_to_none(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value

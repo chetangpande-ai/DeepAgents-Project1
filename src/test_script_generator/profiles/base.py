@@ -5,10 +5,10 @@ from typing import cast
 from test_script_generator.schemas import FrameworkProfile, RepoProfile
 
 
-def scan_repo(repo_path: Path, default_framework: str) -> RepoProfile:
+def scan_repo(repo_path: Path, default_framework: str, warnings: list[str] | None = None) -> RepoProfile:
     framework = _detect_framework(repo_path, default_framework)
     pom = repo_path / "pom.xml"
-    warnings: list[str] = []
+    warnings = list(warnings or [])
     if not repo_path.exists():
         warnings.append(f"Automation repo path does not exist: {repo_path}")
 

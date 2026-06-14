@@ -113,7 +113,7 @@ LangGraph should control deterministic routing, retries, state, and checkpoints.
 ```text
 test-script-generator/
   pyproject.toml
-  .env.example
+  .env
   README.md
   docs/
     test-script-generator-implementation-plan.md
@@ -203,17 +203,17 @@ BRUNO_COLLECTIONS_DIR=./input/bruno
 
 DB_CONNECTION_PROFILES_DIR=./input/db-profiles
 
-GIT_PROVIDER=azure_repos
+GIT_PROVIDER=github
 GIT_REMOTE_NAME=origin
 GIT_BASE_BRANCH=main
 GIT_WORK_BRANCH_PREFIX=ai/generated-tests
 PR_TITLE_PREFIX=[AI Test Scripts]
 PR_TARGET_REVIEWERS=
 
-AZURE_REPOS_ORG_URL=https://dev.azure.com/your-org
-AZURE_REPOS_PROJECT=your-project
-AZURE_REPOS_REPOSITORY=your-repo
-AZURE_REPOS_PAT=
+GITHUB_OWNER=your-github-org-or-user
+GITHUB_REPOSITORY=your-repo
+GITHUB_TOKEN=
+GITHUB_API_URL=https://api.github.com
 ```
 
 Mesh API LLM adapter:
@@ -1054,11 +1054,11 @@ Deliverables:
 - Confirm manual input format for the first implementation, preferably JSON.
 - Confirm target automation repo layout.
 - Publishing model confirmed as pull requests against the configured repo.
-- Confirm PR provider, for example Azure Repos or GitHub.
+- PR provider confirmed as GitHub.
 
 Exit criteria:
 
-- `.env.example` fields are agreed.
+- `.env` fields are agreed.
 - Framework profile rules are agreed.
 - Manual input schema is agreed.
 - PR branch naming and base branch are agreed.
@@ -1236,15 +1236,14 @@ This order reduces risk because script generation can be tested locally before i
 These are the remaining decisions needed before implementation starts:
 
 1. Which manual input format should be implemented first: JSON, YAML, Markdown, or CSV?
-2. Is the configured repo hosted in Azure Repos, GitHub, Bitbucket, or another Git provider?
-3. What are the actual package conventions and folder structure in your Java automation repositories?
-4. Do you already have page objects, API clients, DB utilities, test data utilities, or step definition libraries that the agent must reuse?
-5. What is the expected output for blocked test cases: clarifying questions in the report, PR comments, a defect, or a backlog task?
-6. Which Playwright codegen command and target should be standardized in your environment?
-7. For API tests, should Swagger/OpenAPI, Bruno, or explicit payload files be treated as the preferred source of truth when they disagree?
-8. For DB validation, how should connection profiles resolve credentials: local `.env`, CI secrets, Key Vault, or another secret store?
-9. Are generated tests allowed to run read-only queries against test databases, or should DB checks be mocked/stubbed in v1?
-10. Should skeleton generation ever be allowed for clear web workflows with missing locators, or should those always stay report-only until locators are available?
+2. What are the actual package conventions and folder structure in your Java automation repositories?
+3. Do you already have page objects, API clients, DB utilities, test data utilities, or step definition libraries that the agent must reuse?
+4. What is the expected output for blocked test cases: clarifying questions in the report, PR comments, a defect, or a backlog task?
+5. Which Playwright codegen command and target should be standardized in your environment?
+6. For API tests, should Swagger/OpenAPI, Bruno, or explicit payload files be treated as the preferred source of truth when they disagree?
+7. For DB validation, how should connection profiles resolve credentials: local `.env`, CI secrets, Key Vault, or another secret store?
+8. Are generated tests allowed to run read-only queries against test databases, or should DB checks be mocked/stubbed in v1?
+9. Should skeleton generation ever be allowed for clear web workflows with missing locators, or should those always stay report-only until locators are available?
 
 ## 20. Definition of Done
 

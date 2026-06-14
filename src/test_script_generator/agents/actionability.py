@@ -21,8 +21,9 @@ def assess_test_case(test_case: SourceTestCase, base_dir: Path) -> Actionability
     questions: list[str] = []
     requires_web_recording = False
     recording_reason: str | None = None
+    vague_business_flow = _is_vague_business_flow(test_case)
 
-    if _is_vague_business_flow(test_case):
+    if vague_business_flow:
         ambiguity_types.extend(
             [
                 "functional ambiguity",
@@ -41,6 +42,17 @@ def assess_test_case(test_case: SourceTestCase, base_dir: Path) -> Actionability
             ]
         )
         questions.extend(_trade_questions() if "trade" in _combined_text(test_case) else _generic_questions())
+
+        return ActionabilityAssessment(
+            test_case_id=test_case.source_id,
+            status="blocked",
+            ambiguity_types=_dedupe(ambiguity_types),
+            missing_details=_dedupe(missing_details),
+            blocking_questions=_dedupe(questions),
+            generation_allowed=False,
+            skeleton_allowed=False,
+            requires_web_recording=False,
+        )
 
     layers = set(test_case.automation_layers)
     if "ui" in layers:
@@ -71,7 +83,7 @@ def assess_test_case(test_case: SourceTestCase, base_dir: Path) -> Actionability
     questions = _dedupe(questions)
     ambiguity_types = _dedupe(ambiguity_types)
 
-    if _is_vague_business_flow(test_case) or any(
+    if any(
         detail.startswith(("API", "DB")) or "missing" in detail.lower()
         for detail in missing_details
         if not requires_web_recording

@@ -6,6 +6,7 @@ from langgraph.graph import END, StateGraph
 from test_script_generator.adapters.api_evidence import extract_api_evidence
 from test_script_generator.adapters.db_evidence import extract_db_evidence
 from test_script_generator.adapters.filesystem import write_json, write_text
+from test_script_generator.adapters.github_repo import resolve_automation_repo
 from test_script_generator.adapters.manual_input import load_test_cases
 from test_script_generator.adapters.maven import validate_maven_compile
 from test_script_generator.adapters.playwright_codegen import prepare_recording
@@ -93,7 +94,8 @@ def _classify_framework(state: GeneratorState, settings: Settings) -> dict[str, 
 
 def _scan_repo(state: GeneratorState, settings: Settings) -> dict[str, Any]:
     framework = state.framework_profile or "java-testng-maven"
-    profile = scan_repo(settings.automation_repo_path, framework)
+    repo_path, warnings = resolve_automation_repo(settings)
+    profile = scan_repo(repo_path, framework, warnings=warnings)
     return {"repo_profile": profile}
 
 
@@ -186,7 +188,8 @@ def _write_artifacts(state: GeneratorState) -> dict[str, Any]:
 
 
 def _validate(state: GeneratorState, settings: Settings) -> dict[str, Any]:
-    result = validate_maven_compile(settings.automation_repo_path, dry_run=settings.dry_run)
+    repo_path = Path(state.repo_profile.root_path) if state.repo_profile else settings.automation_repo_path
+    result = validate_maven_compile(repo_path, dry_run=settings.dry_run)
     return {"validation_result": result}
 
 

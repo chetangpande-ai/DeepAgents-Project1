@@ -12,13 +12,83 @@ Current implementation focuses on the safe v1 foundation:
 - DB evidence checks for connection profile, query, query parameters, and validation points
 - dry-run reports under `.tsg-runs/`
 
+## Flow
+
+```mermaid
+flowchart TD
+    A[Manual Testcase Input<br/>JSON, YAML, CSV, Markdown] --> B[Normalize Test Cases]
+    B --> C[Classify Automation Layer<br/>Web, API, DB, Hybrid]
+    C --> D[Detect Framework Profile<br/>java-testng-maven or java-bdd-maven]
+    D --> E[Scan Automation Repo<br/>page objects, API clients, DB utilities, step definitions]
+    E --> F{Actionability Gate}
+
+    F -->|Vague or incomplete| G[Clarification Report<br/>No placeholder code]
+
+    F -->|Clear web case<br/>missing UI steps or locators| H[Prepare Playwright Codegen Recording]
+    H --> I[Save Recording Notes<br/>locator candidates, merged steps]
+    I --> J[Use Existing Steps + Recorded Steps]
+
+    F -->|API case| K{API Evidence Present?}
+    K -->|No Swagger/OpenAPI,<br/>Bruno, or payload info| G
+    K -->|Yes| L[Plan API Script]
+
+    F -->|DB case| M{DB Evidence Present?}
+    M -->|No connection profile,<br/>query, or validations| G
+    M -->|Yes| N[Plan DB Validation Script]
+
+    F -->|Ready case| O[Create Generation Plan]
+    J --> O
+    L --> O
+    N --> O
+
+    O --> P[Generate Java Artifacts<br/>TestNG or Cucumber-JUnit]
+    P --> Q[Self Review<br/>traceability, assertions, gaps]
+    Q --> R[Maven Validation<br/>compile or targeted run]
+    R -->|Failure| S[Repair Loop]
+    S --> Q
+    R -->|Pass or dry-run report| T[Package Run Artifacts]
+    T --> U[Optional GitHub Branch + PR<br/>disabled by default]
+```
+
+## Deep Agent Workflow
+
+```mermaid
+flowchart LR
+    A[LangGraph Orchestrator<br/>GeneratorState checkpoint] --> B[Manual Input Adapter]
+    B --> C[Framework Profiler Agent<br/>Maven, TestNG, Cucumber-JUnit, repo conventions]
+    C --> D[Automation Layer Classifier<br/>Web, API, DB, Hybrid]
+    D --> E[Test Case Actionability Agent]
+
+    E -->|Blocked| F[Clarification Pack<br/>missing flow, data, assertions]
+
+    E -->|Web needs evidence| G[Playwright Codegen Recorder<br/>human-assisted recording]
+    G --> H[Recording Evidence Store<br/>recorded Java, notes, locator candidates]
+    H --> I[Step Merge Agent<br/>original steps + recorded steps]
+
+    E -->|API layer| J[API Evidence Agent<br/>Swagger/OpenAPI, Bruno, payloads]
+    E -->|DB layer| K[DB Evidence Agent<br/>connection profile, query, validation points]
+
+    I --> L[Script Planner Agent]
+    J --> L
+    K --> L
+    E -->|Ready| L
+
+    L --> M[Java Writer Agent<br/>TestNG or Cucumber-JUnit]
+    M --> N[Assertion and Traceability Reviewer]
+    N --> O[Maven Validator]
+    O -->|Compile or binding failure| P[Repair Agent]
+    P --> M
+    O -->|Pass or dry run| Q[Report Packager]
+    Q --> R[Optional GitHub PR Publisher]
+```
+
 ## Setup
 
 ```powershell
 uv sync
 ```
 
-Copy `.env.example` to `.env` and fill values as needed. Mesh API variables are named:
+Update `.env` with your local settings. Mesh API variables are named:
 
 ```env
 MESH_API_KEY=
@@ -26,11 +96,44 @@ MESH_API_URL=
 MESH_MODEL=
 ```
 
+GitHub PR settings are:
+
+```env
+GIT_PROVIDER=github
+GITHUB_OWNER=your-github-org-or-user
+GITHUB_REPOSITORY=your-repo
+GITHUB_TOKEN=
+GITHUB_API_URL=https://api.github.com
+```
+
 ## Run
 
 ```powershell
 uv run test-script-generator generate --input-file input/test-cases.json --framework java-bdd-maven
 ```
+
+## Run The UI
+
+Start the API:
+
+```powershell
+uv run test-script-generator-api
+```
+
+Start the React app:
+
+```powershell
+cd apps/web
+npm run dev
+```
+
+Open:
+
+```text
+http://127.0.0.1:5173
+```
+
+The UI calls the API at `http://127.0.0.1:8001` by default. Override it with `VITE_API_BASE_URL` if needed.
 
 The command writes a run folder with:
 
