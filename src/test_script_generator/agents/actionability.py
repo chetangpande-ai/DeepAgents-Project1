@@ -58,7 +58,19 @@ def assess_test_case(test_case: SourceTestCase, base_dir: Path) -> Actionability
     if "ui" in layers:
         web = test_case.web
         if web and web.recording_script_path:
-            pass
+            recording_path = _resolve_path(web.recording_script_path, base_dir)
+            if not recording_path.exists():
+                requires_web_recording = True
+                recording_reason = (
+                    "Recorded Playwright script was provided, but the file does not exist yet."
+                )
+                missing_details.append(f"recorded Playwright script not found: {recording_path}")
+                questions.append("Run Playwright codegen, close the recorder, then retry generation.")
+            elif recording_path.stat().st_size == 0:
+                requires_web_recording = True
+                recording_reason = "Recorded Playwright script exists, but it is empty."
+                missing_details.append(f"recorded Playwright script is empty: {recording_path}")
+                questions.append("Finish the Playwright recording, close the recorder, then retry generation.")
         elif web and web.record_missing_steps and web.app_url:
             requires_web_recording = True
             recording_reason = "Clear web scenario needs Playwright codegen evidence before Java script generation."
@@ -146,6 +158,13 @@ def _combined_text(test_case: SourceTestCase) -> str:
         parts.append(step.action)
         parts.append(step.expected_result or "")
     return " ".join(parts).lower()
+
+
+def _resolve_path(value: str, base_dir: Path) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return base_dir / path
 
 
 def _trade_questions() -> list[str]:

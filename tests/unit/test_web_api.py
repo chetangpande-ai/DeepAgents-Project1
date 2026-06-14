@@ -44,4 +44,17 @@ def test_generate_endpoint_returns_logs_and_approvals() -> None:
     body = response.json()
     assert body["logs"]
     assert body["approvals"][0]["kind"] == "playwright_recording"
+    assert body["web_recordings"][0]["test_case_id"] == "TC_UI_100"
+    assert "npx playwright codegen" in " ".join(body["web_recordings"][0]["command"])
     assert body["generated_artifacts"] == []
+
+
+def test_recording_launcher_rejects_non_playwright_command() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/recordings/start",
+        json={"command": ["powershell", "-Command", "Get-ChildItem"]},
+    )
+
+    assert response.status_code == 400

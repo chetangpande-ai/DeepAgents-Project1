@@ -1,8 +1,12 @@
 from datetime import datetime, timezone
+import os
 from pathlib import Path
+import shutil
+import subprocess
+from typing import Any
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -16,6 +20,7 @@ from test_script_generator.schemas import (
     GeneratorState,
     SourceTestCase,
     ValidationResult,
+    WebRecordingEvidence,
 )
 
 
@@ -52,8 +57,19 @@ class GenerateResponse(BaseModel):
     framework_profile: FrameworkProfile | None
     logs: list[StageLog]
     approvals: list[ApprovalNotice]
+    web_recordings: list[WebRecordingEvidence]
     generated_artifacts: list[GeneratedArtifact]
     validation_result: ValidationResult | None
+
+
+class StartRecordingRequest(BaseModel):
+    command: list[str]
+
+
+class StartRecordingResponse(BaseModel):
+    status: Literal["started"]
+    pid: int
+    message: str
 
 
 app = FastAPI(title="Test Script Generator API", version="0.1.0")
@@ -95,8 +111,38 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         framework_profile=result.framework_profile,
         logs=_build_stage_logs(result),
         approvals=_build_approval_notices(result),
+        web_recordings=result.web_recordings,
         generated_artifacts=result.artifacts,
         validation_result=result.validation_result,
+    )
+
+
+@app.post("/api/recordings/start", response_model=StartRecordingResponse)
+def start_recording(request: StartRecordingRequest) -> StartRecordingResponse:
+    command = _validated_playwright_command(request.command)
+    kwargs: dict[str, Any] = {
+        "cwd": str(Path.cwd()),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+
+    try:
+        process = subprocess.Popen(command, **kwargs)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to start Playwright codegen: {exc}",
+        ) from exc
+
+    return StartRecordingResponse(
+        status="started",
+        pid=process.pid,
+        message="Playwright recorder started. Close the recorder window when recording is complete.",
     )
 
 
@@ -242,3 +288,36 @@ def _assessment_message(assessment) -> str:
         return assessment.recording_reason or "Playwright recording required."
     return "Ready for generation."
 
+
+def _validated_playwright_command(command: list[str]) -> list[str]:
+    if len(command) < 8:
+        raise HTTPException(status_code=400, detail="Recording command is incomplete.")
+
+    executable_name = Path(command[0]).name.lower()
+    if executable_name not in {"npx", "npx.cmd", "npx.exe"}:
+        raise HTTPException(status_code=400, detail="Only npx Playwright codegen commands are allowed.")
+
+    if command[1:5] != ["playwright", "codegen", "--target", "java"]:
+        raise HTTPException(status_code=400, detail="Only Java Playwright codegen commands are allowed.")
+
+    if "--output" not in command:
+        raise HTTPException(status_code=400, detail="Recording command must include --output.")
+
+    output_index = command.index("--output")
+    if output_index + 1 >= len(command):
+        raise HTTPException(status_code=400, detail="Recording command is missing the output path.")
+
+    output_path = Path(command[output_index + 1]).resolve()
+    runs_root = (Path.cwd() / ".tsg-runs").resolve()
+    if runs_root != output_path and runs_root not in output_path.parents:
+        raise HTTPException(status_code=400, detail="Recording output must be under .tsg-runs.")
+
+    target_url = command[-1]
+    if not target_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Recording target must be an HTTP or HTTPS URL.")
+
+    npx_path = shutil.which("npx.cmd" if os.name == "nt" else "npx") or shutil.which("npx")
+    if not npx_path:
+        raise HTTPException(status_code=400, detail="npx is not available on this machine.")
+
+    return [npx_path, *command[1:]]

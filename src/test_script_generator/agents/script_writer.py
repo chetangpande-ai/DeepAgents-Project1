@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from test_script_generator.schemas import FrameworkProfile, GeneratedArtifact, SourceTestCase
 
 
@@ -10,9 +12,17 @@ def generate_artifacts(
     artifacts: list[GeneratedArtifact] = []
     for test_case in planned:
         if framework == "java-bdd-maven":
-            artifacts.append(_feature_artifact(test_case))
+            artifacts.extend(_bdd_artifacts(test_case))
         else:
             artifacts.append(_testng_artifact(test_case))
+    return artifacts
+
+
+def _bdd_artifacts(test_case: SourceTestCase) -> list[GeneratedArtifact]:
+    artifacts = [_feature_artifact(test_case)]
+    recording = _read_recording(test_case)
+    if recording:
+        artifacts.append(_step_definition_artifact(test_case, recording[0], recording[1]))
     return artifacts
 
 
@@ -35,6 +45,7 @@ def _feature_artifact(test_case: SourceTestCase) -> GeneratedArtifact:
 def _testng_artifact(test_case: SourceTestCase) -> GeneratedArtifact:
     trace_tag = _trace_tag(test_case.source_id)
     class_name = f"{_safe_class_part(trace_tag)}GeneratedTest"
+    recording = _read_recording(test_case)
     lines = [
         "package generated;",
         "",
@@ -48,6 +59,15 @@ def _testng_artifact(test_case: SourceTestCase) -> GeneratedArtifact:
         lines.append(f"        // Step {step.step_number}: {step.action}")
         if step.expected_result:
             lines.append(f"        // Expected: {step.expected_result}")
+    if recording:
+        lines.extend(
+            [
+                "",
+                f"        // Recorded Playwright evidence from: {recording[0]}",
+                "        // Refactor these actions into page objects or reusable helpers.",
+            ]
+        )
+        lines.extend(_java_comment_block(recording[1], indent="        ", max_lines=80))
     lines.extend(["    }", "}"])
     return GeneratedArtifact(
         path=f"src/test/java/generated/{class_name}.java",
@@ -55,6 +75,90 @@ def _testng_artifact(test_case: SourceTestCase) -> GeneratedArtifact:
         content="\n".join(lines) + "\n",
         related_test_case_ids=[test_case.source_id],
     )
+
+
+def _step_definition_artifact(
+    test_case: SourceTestCase,
+    recording_path: str,
+    recording_content: str,
+) -> GeneratedArtifact:
+    trace_tag = _trace_tag(test_case.source_id)
+    class_name = f"{_safe_class_part(trace_tag)}Steps"
+    lines = [
+        "package generated.steps;",
+        "",
+        "import io.cucumber.java.en.Given;",
+        "import io.cucumber.java.en.Then;",
+        "import io.cucumber.java.en.When;",
+        "",
+        f"public class {class_name} {{",
+        f"    // Recorded Playwright evidence from: {recording_path}",
+        "    // Move stable interactions into page objects before merging.",
+        "",
+    ]
+
+    for step in test_case.steps:
+        action_annotation = "Given" if step.step_number == 1 else "When"
+        lines.extend(
+            [
+                f'    @{action_annotation}("{_cucumber_text(step.action)}")',
+                f"    public void step{step.step_number}Action() {{",
+                "        // TODO: Implement using page objects and the recorded evidence below.",
+                "    }",
+                "",
+            ]
+        )
+        if step.expected_result:
+            lines.extend(
+                [
+                    f'    @Then("{_cucumber_text(step.expected_result)}")',
+                    f"    public void step{step.step_number}ExpectedResult() {{",
+                    "        // TODO: Implement assertion using framework helpers.",
+                    "    }",
+                    "",
+                ]
+            )
+
+    lines.append("    /*")
+    lines.append("     * Recorded Playwright code:")
+    lines.extend(_block_comment_lines(recording_content, indent="     * ", max_lines=120))
+    lines.append("     */")
+    lines.append("}")
+    return GeneratedArtifact(
+        path=f"src/test/java/generated/steps/{class_name}.java",
+        artifact_type="step_definition",
+        content="\n".join(lines) + "\n",
+        related_test_case_ids=[test_case.source_id],
+    )
+
+
+def _read_recording(test_case: SourceTestCase) -> tuple[str, str] | None:
+    if not test_case.web or not test_case.web.recording_script_path:
+        return None
+
+    path = Path(test_case.web.recording_script_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+
+    content = path.read_text(encoding="utf-8", errors="ignore").strip()
+    if not content:
+        return None
+    return str(path), content
+
+
+def _java_comment_block(content: str, indent: str, max_lines: int) -> list[str]:
+    return [f"{indent}// {line}" if line else f"{indent}//" for line in content.splitlines()[:max_lines]]
+
+
+def _block_comment_lines(content: str, indent: str, max_lines: int) -> list[str]:
+    return [
+        f"{indent}{line.replace('*/', '* /')}" if line else indent.rstrip()
+        for line in content.splitlines()[:max_lines]
+    ]
+
+
+def _cucumber_text(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _trace_tag(value: str) -> str:

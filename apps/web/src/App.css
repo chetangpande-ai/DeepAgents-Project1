@@ -86,7 +86,8 @@ h2 {
 .result-panel,
 .result-section,
 .output-panel,
-.evidence-block {
+.evidence-block,
+.recording-panel {
   border: 1px solid #dfe5ee;
   border-radius: 8px;
   background: #ffffff;
@@ -114,7 +115,8 @@ h2 {
 
 .result-section,
 .output-panel,
-.evidence-block {
+.evidence-block,
+.recording-panel {
   padding: 14px;
 }
 
@@ -252,12 +254,18 @@ button:focus-visible {
   font-weight: 800;
 }
 
+.primary-button.small {
+  padding: 8px 11px;
+  font-size: 13px;
+}
+
 .primary-button:disabled {
   cursor: wait;
   opacity: 0.75;
 }
 
 .secondary-button {
+  gap: 7px;
   padding: 7px 10px;
   font-weight: 700;
 }
@@ -278,7 +286,8 @@ button:focus-visible {
 
 .timeline,
 .notice-list,
-.artifact-list {
+.artifact-list,
+.recording-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -346,6 +355,79 @@ button:focus-visible {
 
 .notice.info {
   border-left-color: #2f6fed;
+}
+
+.recording-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid #dfe5ee;
+  border-radius: 7px;
+  padding: 12px;
+  background: #fbfcfe;
+}
+
+.recording-card-header,
+.recording-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recording-card-header p {
+  margin-top: 4px;
+  color: #5d6a80;
+  font-size: 13px;
+}
+
+.recording-card-header span {
+  max-width: 280px;
+  overflow-wrap: anywhere;
+  color: #53627a;
+  font-size: 12px;
+}
+
+.recording-path-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.recording-path-grid div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.recording-path-grid span {
+  color: #53627a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.recording-path-grid code {
+  overflow-wrap: anywhere;
+  border-radius: 5px;
+  padding: 7px;
+  background: #eef2f7;
+  color: #263a57;
+  font-size: 12px;
+}
+
+.recording-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.recording-message {
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #eef4ff;
+  color: #174ea6;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .tab-row {
@@ -462,7 +544,13 @@ code {
   }
 
   .field-grid.two,
-  .step-row {
+  .step-row,
+  .recording-path-grid {
     grid-template-columns: 1fr;
+  }
+
+  .recording-card-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

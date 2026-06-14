@@ -1,15 +1,18 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  Clipboard,
   ClipboardList,
   Code2,
   Database,
+  FileCheck2,
   FileText,
   GitPullRequest,
   Globe2,
   Loader2,
   Play,
   Server,
+  Terminal,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
@@ -46,6 +49,16 @@ type GeneratedArtifact = {
   related_test_case_ids: string[]
 }
 
+type WebRecordingEvidence = {
+  test_case_id: string
+  app_url: string
+  recording_script_path: string
+  notes_path?: string | null
+  storage_state_path?: string | null
+  generated_locator_candidates: string[]
+  command: string[]
+}
+
 type GenerateResponse = {
   run_dir: string
   report_path: string | null
@@ -53,6 +66,7 @@ type GenerateResponse = {
   framework_profile: FrameworkProfile
   logs: StageLog[]
   approvals: ApprovalNotice[]
+  web_recordings: WebRecordingEvidence[]
   generated_artifacts: GeneratedArtifact[]
   validation_result?: {
     passed: boolean
@@ -69,6 +83,7 @@ type FormState = {
   layers: AutomationLayer[]
   webAppUrl: string
   webRecordMissingSteps: boolean
+  webRecordingScriptPath: string
   apiEndpoint: string
   apiMethod: string
   apiPayload: string
@@ -90,6 +105,7 @@ const defaultForm: FormState = {
   layers: ['ui'],
   webAppUrl: 'https://test.example.com',
   webRecordMissingSteps: true,
+  webRecordingScriptPath: '',
   apiEndpoint: '/api/orders',
   apiMethod: 'POST',
   apiPayload: '{\n  "couponCode": "INVALID"\n}',
@@ -123,11 +139,12 @@ function App() {
   const [isRunning, setIsRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeOutput, setActiveOutput] = useState<'artifacts' | 'report'>('artifacts')
+  const [recordingMessages, setRecordingMessages] = useState<Record<string, string>>({})
 
   const layers = new Set(form.layers)
   const statusSummary = useMemo(() => summarize(response), [response])
 
-  async function submit() {
+  async function submit(targetForm = form) {
     setIsRunning(true)
     setError(null)
     setResponse(null)
@@ -135,7 +152,7 @@ function App() {
       const result = await fetch(`${API_BASE_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildRequest(form)),
+        body: JSON.stringify(buildRequest(targetForm)),
       })
       if (!result.ok) {
         const text = await result.text()
@@ -147,6 +164,57 @@ function App() {
     } finally {
       setIsRunning(false)
     }
+  }
+
+  async function startRecording(recording: WebRecordingEvidence) {
+    const key = recordingKey(recording)
+    setRecordingMessages((current) => ({
+      ...current,
+      [key]: 'Starting Playwright recorder...',
+    }))
+    try {
+      const result = await fetch(`${API_BASE_URL}/api/recordings/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: recording.command }),
+      })
+      const body = await result.json()
+      if (!result.ok) {
+        throw new Error(body.detail || `Recorder launch failed with ${result.status}`)
+      }
+      setRecordingMessages((current) => ({
+        ...current,
+        [key]: `${body.message} PID: ${body.pid}`,
+      }))
+    } catch (caught) {
+      setRecordingMessages((current) => ({
+        ...current,
+        [key]: caught instanceof Error ? caught.message : 'Unable to start recorder.',
+      }))
+    }
+  }
+
+  async function copyRecordingCommand(recording: WebRecordingEvidence) {
+    const key = recordingKey(recording)
+    try {
+      await navigator.clipboard.writeText(recording.command.join(' '))
+      setRecordingMessages((current) => ({ ...current, [key]: 'Command copied.' }))
+    } catch {
+      setRecordingMessages((current) => ({
+        ...current,
+        [key]: 'Copy failed. Select the command text and copy it manually.',
+      }))
+    }
+  }
+
+  function useRecordingAndGenerate(recording: WebRecordingEvidence) {
+    const nextForm = {
+      ...form,
+      webRecordMissingSteps: false,
+      webRecordingScriptPath: recording.recording_script_path,
+    }
+    setForm(nextForm)
+    void submit(nextForm)
   }
 
   return (
@@ -238,6 +306,14 @@ function App() {
                   onChange={(event) => update('webRecordMissingSteps', event.target.checked)}
                 />
                 Route missing web steps to Playwright codegen
+              </label>
+              <label>
+                Recorded Playwright script path
+                <input
+                  value={form.webRecordingScriptPath}
+                  onChange={(event) => update('webRecordingScriptPath', event.target.value)}
+                  placeholder=".tsg-runs/.../recordings/TC_001/playwright-codegen.java"
+                />
               </label>
             </EvidenceBlock>
           )}
@@ -362,7 +438,7 @@ function App() {
             ))}
           </div>
 
-          <button type="button" className="primary-button" onClick={submit} disabled={isRunning}>
+          <button type="button" className="primary-button" onClick={() => void submit()} disabled={isRunning}>
             {isRunning ? <Loader2 className="spin" size={18} /> : <Play size={18} />}
             {isRunning ? 'Running generator' : 'Generate Automation Plan'}
           </button>
@@ -395,6 +471,14 @@ function App() {
               </div>
             </section>
           </div>
+
+          <RecordingTasks
+            messages={recordingMessages}
+            onCopy={(recording) => void copyRecordingCommand(recording)}
+            onGenerate={useRecordingAndGenerate}
+            onStart={(recording) => void startRecording(recording)}
+            recordings={response?.web_recordings ?? []}
+          />
 
           <section className="output-panel">
             <div className="output-header">
@@ -495,8 +579,9 @@ function buildRequest(form: FormState) {
 
   if (form.layers.includes('ui')) {
     testCase.web = {
-      record_missing_steps: form.webRecordMissingSteps,
+      record_missing_steps: form.webRecordMissingSteps && !form.webRecordingScriptPath,
       app_url: form.webAppUrl || null,
+      recording_script_path: form.webRecordingScriptPath || null,
     }
   }
 
@@ -627,6 +712,77 @@ function NoticeItem({ notice }: { notice: ApprovalNotice }) {
   )
 }
 
+function RecordingTasks({
+  messages,
+  onCopy,
+  onGenerate,
+  onStart,
+  recordings,
+}: {
+  messages: Record<string, string>
+  onCopy: (recording: WebRecordingEvidence) => void
+  onGenerate: (recording: WebRecordingEvidence) => void
+  onStart: (recording: WebRecordingEvidence) => void
+  recordings: WebRecordingEvidence[]
+}) {
+  if (!recordings.length) {
+    return null
+  }
+
+  return (
+    <section className="recording-panel">
+      <SectionTitle icon={<Terminal size={18} />} title="Playwright Recording Tasks" />
+      <div className="recording-list">
+        {recordings.map((recording) => {
+          const key = recordingKey(recording)
+          return (
+            <article className="recording-card" key={key}>
+              <div className="recording-card-header">
+                <div>
+                  <strong>{recording.test_case_id}</strong>
+                  <p>Record the missing web flow, close codegen, then generate with the saved script.</p>
+                </div>
+                <span>{recording.app_url}</span>
+              </div>
+              <label>
+                Codegen command
+                <textarea readOnly rows={3} value={recording.command.join(' ')} />
+              </label>
+              <div className="recording-path-grid">
+                <div>
+                  <span>Output script</span>
+                  <code>{recording.recording_script_path}</code>
+                </div>
+                {recording.notes_path && (
+                  <div>
+                    <span>Notes</span>
+                    <code>{recording.notes_path}</code>
+                  </div>
+                )}
+              </div>
+              <div className="recording-actions">
+                <button type="button" className="secondary-button" onClick={() => onStart(recording)}>
+                  <Play size={16} />
+                  Start recorder
+                </button>
+                <button type="button" className="secondary-button" onClick={() => onCopy(recording)}>
+                  <Clipboard size={16} />
+                  Copy command
+                </button>
+                <button type="button" className="primary-button small" onClick={() => onGenerate(recording)}>
+                  <FileCheck2 size={16} />
+                  Generate with recording
+                </button>
+              </div>
+              {messages[key] && <div className="recording-message">{messages[key]}</div>}
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 function ArtifactViewer({ artifacts }: { artifacts: GeneratedArtifact[] }) {
   if (!artifacts.length) {
     return <EmptyState text="No generated script artifacts yet. The testcase may need approval or recording first." />
@@ -648,6 +804,10 @@ function ArtifactViewer({ artifacts }: { artifacts: GeneratedArtifact[] }) {
 
 function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>
+}
+
+function recordingKey(recording: WebRecordingEvidence) {
+  return `${recording.test_case_id}-${recording.recording_script_path}`
 }
 
 export default App
