@@ -19,11 +19,14 @@ def generate_artifacts(
 
 
 def _bdd_artifacts(test_case: SourceTestCase) -> list[GeneratedArtifact]:
-    artifacts = [_feature_artifact(test_case)]
     recording = _read_recording(test_case)
-    if recording:
-        artifacts.append(_step_definition_artifact(test_case, recording[0], recording[1]))
-    return artifacts
+    recording_path = recording[0] if recording else None
+    recording_content = recording[1] if recording else None
+    return [
+        _feature_artifact(test_case),
+        _step_definition_artifact(test_case, recording_path, recording_content),
+        _runner_artifact(test_case),
+    ]
 
 
 def _feature_artifact(test_case: SourceTestCase) -> GeneratedArtifact:
@@ -79,8 +82,8 @@ def _testng_artifact(test_case: SourceTestCase) -> GeneratedArtifact:
 
 def _step_definition_artifact(
     test_case: SourceTestCase,
-    recording_path: str,
-    recording_content: str,
+    recording_path: str | None,
+    recording_content: str | None,
 ) -> GeneratedArtifact:
     trace_tag = _trace_tag(test_case.source_id)
     class_name = f"{_safe_class_part(trace_tag)}Steps"
@@ -92,10 +95,18 @@ def _step_definition_artifact(
         "import io.cucumber.java.en.When;",
         "",
         f"public class {class_name} {{",
-        f"    // Recorded Playwright evidence from: {recording_path}",
-        "    // Move stable interactions into page objects before merging.",
+        f"    // Traceability: {trace_tag}",
+        "    // Replace generated method bodies with calls to page objects, API clients, or DB helpers.",
         "",
     ]
+    if recording_path and recording_content:
+        lines.extend(
+            [
+                f"    // Recorded Playwright evidence from: {recording_path}",
+                "    // Move stable interactions into page objects before merging.",
+                "",
+            ]
+        )
 
     for step in test_case.steps:
         action_annotation = "Given" if step.step_number == 1 else "When"
@@ -119,14 +130,43 @@ def _step_definition_artifact(
                 ]
             )
 
-    lines.append("    /*")
-    lines.append("     * Recorded Playwright code:")
-    lines.extend(_block_comment_lines(recording_content, indent="     * ", max_lines=120))
-    lines.append("     */")
+    if recording_content:
+        lines.append("    /*")
+        lines.append("     * Recorded Playwright code:")
+        lines.extend(_block_comment_lines(recording_content, indent="     * ", max_lines=120))
+        lines.append("     */")
     lines.append("}")
     return GeneratedArtifact(
         path=f"src/test/java/generated/steps/{class_name}.java",
         artifact_type="step_definition",
+        content="\n".join(lines) + "\n",
+        related_test_case_ids=[test_case.source_id],
+    )
+
+
+def _runner_artifact(test_case: SourceTestCase) -> GeneratedArtifact:
+    trace_tag = _trace_tag(test_case.source_id)
+    class_name = f"{_safe_class_part(trace_tag)}Runner"
+    lines = [
+        "package generated.runners;",
+        "",
+        "import io.cucumber.junit.Cucumber;",
+        "import io.cucumber.junit.CucumberOptions;",
+        "import org.junit.runner.RunWith;",
+        "",
+        "@RunWith(Cucumber.class)",
+        "@CucumberOptions(",
+        '    features = "src/test/resources/features/generated",',
+        '    glue = {"generated.steps"},',
+        f'    tags = "@{trace_tag}",',
+        "    plugin = {\"pretty\", \"html:target/cucumber-reports/" + trace_tag + "\"}",
+        ")",
+        f"public class {class_name} {{",
+        "}",
+    ]
+    return GeneratedArtifact(
+        path=f"src/test/java/generated/runners/{class_name}.java",
+        artifact_type="runner",
         content="\n".join(lines) + "\n",
         related_test_case_ids=[test_case.source_id],
     )

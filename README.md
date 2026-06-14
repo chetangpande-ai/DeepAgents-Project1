@@ -6,6 +6,7 @@ Current implementation focuses on the safe v1 foundation:
 
 - manual testcase input from JSON/YAML/CSV/Markdown
 - `java-testng-maven` and `java-bdd-maven` framework profiles
+- BDD generation emits a feature file, Cucumber step-definition class, and JUnit runner
 - actionability gate for vague or underspecified tests
 - Playwright codegen recording requests for clear web cases with missing UI steps
 - API evidence checks for Swagger/OpenAPI, Bruno, or explicit endpoint/payload details
