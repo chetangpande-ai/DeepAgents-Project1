@@ -1,10 +1,11 @@
 # Test Script Generator
 
-Python/LangGraph starter for generating Java automation scripts from manually supplied test cases.
+Python/LangGraph starter for generating Java automation scripts from manually supplied test cases or tester-led exploratory recordings.
 
 Current implementation focuses on the safe v1 foundation:
 
 - manual testcase input from JSON/YAML/CSV/Markdown
+- exploratory UI mode where a tester provides an application URL, records a Playwright journey, and converts it into testcase steps plus scripts
 - `java-testng-maven` and `java-bdd-maven` framework profiles
 - BDD generation emits a feature file, Cucumber step-definition class, and JUnit runner
 - actionability gate for vague or underspecified tests
@@ -18,7 +19,11 @@ Current implementation focuses on the safe v1 foundation:
 
 ```mermaid
 flowchart TD
-    A[Manual Testcase Input<br/>JSON, YAML, CSV, Markdown] --> B[Normalize Test Cases]
+    A[Manual Testcase Input<br/>Form, JSON, YAML, CSV, Markdown] --> B[Normalize Test Cases]
+    X[Exploratory UI Input<br/>Application URL] --> Y[Prepare Playwright Codegen Recording]
+    Y --> Z[Tester Records Real User Journey]
+    Z --> AA[Convert Recording To Meaningful Testcase Steps]
+    AA --> B
     B --> C[Classify Automation Layer<br/>Web, API, DB, Hybrid]
     C --> D[Detect Framework Profile<br/>java-testng-maven or java-bdd-maven]
     D --> E[Scan Automation Repo<br/>page objects, API clients, DB utilities, step definitions]
@@ -57,6 +62,8 @@ flowchart TD
 ```mermaid
 flowchart LR
     A[LangGraph Orchestrator<br/>GeneratorState checkpoint] --> B[Manual Input Adapter]
+    X[Exploratory URL Adapter<br/>Playwright recording task] --> Y[Recording To Testcase Agent<br/>actions, assertions, titles]
+    Y --> B
     B --> C[Framework Profiler Agent<br/>Maven, TestNG, Cucumber-JUnit, repo conventions]
     C --> D[Automation Layer Classifier<br/>Web, API, DB, Hybrid]
     D --> E[Test Case Actionability Agent]
@@ -153,10 +160,19 @@ http://127.0.0.1:5173
 
 The UI calls the API at `http://127.0.0.1:8001` by default. Override it with `VITE_API_BASE_URL` if needed.
 
-The UI supports two input modes:
+The UI supports three input modes:
 
 - **Form**: manual fields for testcase, Web/API/DB evidence, and steps.
 - **JSON**: paste JSON directly or upload a `.json` file.
+- **Explore**: provide only an application URL, record the exploratory flow with Playwright codegen, and generate testcase steps plus scripts from that recording.
+
+Explore mode reuses the same generation path as normal testcases:
+
+1. The API creates a Playwright codegen command and a target `playwright-codegen.java` file under the run folder.
+2. The tester clicks **Start recorder** and performs the user journey in the browser.
+3. After the recorder is closed, the UI calls the exploratory generation endpoint.
+4. The backend converts recorded actions into a `SourceTestCase`, then runs the existing actionability, planning, Java writer, validation, report, GitHub push, and PR workflow.
+5. The UI shows the inferred testcase steps, logs, generated artifacts, and repository publish result.
 
 JSON mode accepts either a raw testcase object:
 

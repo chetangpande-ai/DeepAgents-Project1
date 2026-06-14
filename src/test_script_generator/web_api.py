@@ -11,6 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from test_script_generator.adapters.filesystem import create_run_dir
+from test_script_generator.adapters.playwright_codegen import prepare_recording
+from test_script_generator.agents.exploratory import build_test_case_from_recording
 from test_script_generator.config import Settings
 from test_script_generator.graph import run_workflow
 from test_script_generator.reports.markdown import render_markdown_report
@@ -20,7 +22,9 @@ from test_script_generator.schemas import (
     GeneratorState,
     RepositoryPublishResult,
     SourceTestCase,
+    TestStep,
     ValidationResult,
+    WebEvidenceInput,
     WebRecordingEvidence,
 )
 
@@ -62,6 +66,29 @@ class GenerateResponse(BaseModel):
     generated_artifacts: list[GeneratedArtifact]
     validation_result: ValidationResult | None
     publish_result: RepositoryPublishResult | None
+    generated_test_case: SourceTestCase | None = None
+
+
+class ExploratoryPrepareRequest(BaseModel):
+    app_url: str
+    framework_profile: FrameworkProfile = "java-bdd-maven"
+    source_id: str | None = None
+    title: str | None = None
+
+
+class ExploratoryPrepareResponse(BaseModel):
+    run_dir: str
+    framework_profile: FrameworkProfile
+    recording: WebRecordingEvidence
+
+
+class ExploratoryGenerateRequest(BaseModel):
+    app_url: str
+    recording_script_path: str
+    framework_profile: FrameworkProfile = "java-bdd-maven"
+    source_id: str | None = None
+    title: str | None = None
+    dry_run: bool | None = None
 
 
 class StartRecordingRequest(BaseModel):
@@ -99,14 +126,98 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         settings.automation_repo_path = Path(request.automation_repo_path)
 
     run_dir = create_run_dir()
+    return _run_generation(
+        request.test_case,
+        request.framework_profile,
+        settings,
+        run_dir,
+        generated_test_case=None,
+    )
+
+
+@app.post("/api/exploratory/prepare", response_model=ExploratoryPrepareResponse)
+def prepare_exploratory_recording(
+    request: ExploratoryPrepareRequest,
+) -> ExploratoryPrepareResponse:
+    settings = Settings()
+    settings.default_framework_profile = request.framework_profile
+    run_dir = create_run_dir()
+    source_id = request.source_id or _exploratory_source_id()
+    test_case = SourceTestCase(
+        source_id=source_id,
+        source_system="exploratory-ui",
+        title=request.title or "Exploratory application flow",
+        automation_layers=["ui"],
+        web=WebEvidenceInput(
+            record_missing_steps=True,
+            app_url=request.app_url,
+        ),
+        steps=[
+            TestStep(
+                step_number=1,
+                action=f"Explore the application at {request.app_url}.",
+                expected_result="Tester completes an exploratory user journey.",
+            )
+        ],
+    )
+    recording = prepare_recording(test_case, settings, run_dir)
+    return ExploratoryPrepareResponse(
+        run_dir=str(run_dir),
+        framework_profile=request.framework_profile,
+        recording=recording,
+    )
+
+
+@app.post("/api/exploratory/generate", response_model=GenerateResponse)
+def generate_from_exploratory_recording(
+    request: ExploratoryGenerateRequest,
+) -> GenerateResponse:
+    recording_path = Path(request.recording_script_path)
+    if not recording_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Recording script does not exist: {recording_path}",
+        )
+    if recording_path.stat().st_size == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Recording script is empty: {recording_path}",
+        )
+
+    settings = Settings()
+    settings.default_framework_profile = request.framework_profile
+    if request.dry_run is not None:
+        settings.dry_run = request.dry_run
+
+    test_case = build_test_case_from_recording(
+        app_url=request.app_url,
+        recording_script_path=request.recording_script_path,
+        source_id=request.source_id,
+        title=request.title,
+    )
+    return _run_generation(
+        test_case,
+        request.framework_profile,
+        settings,
+        create_run_dir(),
+        generated_test_case=test_case,
+    )
+
+
+def _run_generation(
+    test_case: SourceTestCase,
+    framework_profile: FrameworkProfile,
+    settings: Settings,
+    run_dir: Path,
+    generated_test_case: SourceTestCase | None,
+) -> GenerateResponse:
     state = GeneratorState(
         run_dir=run_dir,
-        test_cases=[request.test_case],
-        framework_profile=request.framework_profile,
+        test_cases=[test_case],
+        framework_profile=framework_profile,
     )
     result = run_workflow(state, settings)
     report = render_markdown_report(result)
-
     return GenerateResponse(
         run_dir=str(run_dir),
         report_path=str(result.final_report_path) if result.final_report_path else None,
@@ -118,6 +229,7 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         generated_artifacts=result.artifacts,
         validation_result=result.validation_result,
         publish_result=result.publish_result,
+        generated_test_case=generated_test_case,
     )
 
 
@@ -350,6 +462,10 @@ def _publish_notice_message(publish_result: RepositoryPublishResult) -> str:
         f"Generated code pushed to {publish_result.repository} "
         f"on branch {publish_result.branch_name}."
     )
+
+
+def _exploratory_source_id() -> str:
+    return datetime.now(timezone.utc).strftime("TC_EXPLORE_%Y%m%d%H%M%S")
 
 
 def _validated_playwright_command(command: list[str]) -> list[str]:

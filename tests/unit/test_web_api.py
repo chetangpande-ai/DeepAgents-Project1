@@ -58,3 +58,57 @@ def test_recording_launcher_rejects_non_playwright_command() -> None:
     )
 
     assert response.status_code == 400
+
+
+def test_exploratory_prepare_returns_recording_task() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/exploratory/prepare",
+        json={
+            "framework_profile": "java-bdd-maven",
+            "app_url": "https://example.com/login",
+            "source_id": "TC_EXPLORE_PREP_001",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["recording"]["test_case_id"] == "TC_EXPLORE_PREP_001"
+    assert "npx playwright codegen" in " ".join(body["recording"]["command"])
+
+
+def test_exploratory_generate_converts_recording_to_scripts(tmp_path) -> None:
+    client = TestClient(app)
+    recording = tmp_path / "playwright-codegen.java"
+    recording.write_text(
+        "\n".join(
+            [
+                'page.navigate("https://example.com/login");',
+                'page.getByPlaceholder("Mobile Number").fill("9999999999");',
+                'page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Continue")).click();',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/api/exploratory/generate",
+        json={
+            "framework_profile": "java-bdd-maven",
+            "dry_run": True,
+            "app_url": "https://example.com/login",
+            "recording_script_path": str(recording),
+            "source_id": "TC_EXPLORE_LOGIN_001",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["generated_test_case"]["source_id"] == "TC_EXPLORE_LOGIN_001"
+    assert body["generated_test_case"]["steps"][1]["action"] == "Enter test data in Mobile Number."
+    assert {artifact["artifact_type"] for artifact in body["generated_artifacts"]} == {
+        "feature_file",
+        "step_definition",
+        "runner",
+    }

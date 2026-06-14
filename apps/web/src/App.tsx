@@ -97,6 +97,15 @@ type GenerateResponse = {
     errors: string[]
   } | null
   publish_result?: RepositoryPublishResult | null
+  generated_test_case?: GeneratedTestCase | null
+}
+
+type GeneratedTestCase = {
+  source_id: string
+  title: string
+  description?: string | null
+  automation_layers: string[]
+  steps: TestStep[]
 }
 
 type GenerateRequestBody = {
@@ -104,6 +113,12 @@ type GenerateRequestBody = {
   automation_repo_path?: string | null
   dry_run?: boolean | null
   test_case: Record<string, unknown>
+}
+
+type ExploratoryPrepareResponse = {
+  run_dir: string
+  framework_profile: FrameworkProfile
+  recording: WebRecordingEvidence
 }
 
 type FormState = {
@@ -195,9 +210,15 @@ const defaultJsonText = JSON.stringify(
 
 function App() {
   const [form, setForm] = useState<FormState>(defaultForm)
-  const [inputMode, setInputMode] = useState<'form' | 'json'>('form')
+  const [inputMode, setInputMode] = useState<'form' | 'json' | 'explore'>('form')
   const [jsonText, setJsonText] = useState(defaultJsonText)
   const [jsonStatus, setJsonStatus] = useState<string | null>(null)
+  const [exploreUrl, setExploreUrl] = useState('https://example.com/login')
+  const [exploreTitle, setExploreTitle] = useState('')
+  const [exploreSourceId, setExploreSourceId] = useState('')
+  const [exploreFramework, setExploreFramework] = useState<FrameworkProfile>('java-bdd-maven')
+  const [exploreRecording, setExploreRecording] = useState<WebRecordingEvidence | null>(null)
+  const [exploreStatus, setExploreStatus] = useState<string | null>(null)
   const [response, setResponse] = useState<GenerateResponse | null>(null)
   const [isRunning, setIsRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -206,6 +227,7 @@ function App() {
 
   const layers = new Set(form.layers)
   const statusSummary = useMemo(() => summarize(response), [response])
+  const exploreRecordingMessage = exploreRecording ? recordingMessages[recordingKey(exploreRecording)] : null
 
   async function submit(targetForm = form) {
     await submitRequest(buildRequest(targetForm))
@@ -261,6 +283,67 @@ function App() {
     const text = await file.text()
     setJsonText(text)
     setJsonStatus(`Loaded ${file.name}.`)
+  }
+
+  async function prepareExploration() {
+    setError(null)
+    setExploreStatus(null)
+    setExploreRecording(null)
+    try {
+      assertHttpUrl(exploreUrl)
+      const result = await fetch(`${API_BASE_URL}/api/exploratory/prepare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_url: exploreUrl,
+          framework_profile: exploreFramework,
+          source_id: exploreSourceId.trim() || null,
+          title: exploreTitle.trim() || null,
+        }),
+      })
+      const body = await result.json()
+      if (!result.ok) {
+        throw new Error(body.detail || `Exploratory setup failed with ${result.status}`)
+      }
+      const prepared = body as ExploratoryPrepareResponse
+      setExploreRecording(prepared.recording)
+      setExploreStatus('Recording task is ready. Start the recorder, explore the app, then generate scripts.')
+    } catch (caught) {
+      setExploreStatus(caught instanceof Error ? caught.message : 'Unable to prepare exploratory recording.')
+    }
+  }
+
+  async function generateExploration() {
+    if (!exploreRecording) {
+      setExploreStatus('Prepare and complete a recording before generating scripts.')
+      return
+    }
+    setIsRunning(true)
+    setError(null)
+    setResponse(null)
+    try {
+      const result = await fetch(`${API_BASE_URL}/api/exploratory/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_url: exploreUrl,
+          framework_profile: exploreFramework,
+          recording_script_path: exploreRecording.recording_script_path,
+          source_id: exploreSourceId.trim() || exploreRecording.test_case_id,
+          title: exploreTitle.trim() || null,
+        }),
+      })
+      const body = await result.json()
+      if (!result.ok) {
+        throw new Error(body.detail || `Exploratory generation failed with ${result.status}`)
+      }
+      setResponse(body as GenerateResponse)
+      setExploreStatus('Exploratory recording converted into testcase and scripts.')
+    } catch (caught) {
+      setExploreStatus(caught instanceof Error ? caught.message : 'Unable to generate from exploration.')
+    } finally {
+      setIsRunning(false)
+    }
   }
 
   async function startRecording(recording: WebRecordingEvidence) {
@@ -345,9 +428,16 @@ function App() {
             >
               JSON
             </button>
+            <button
+              type="button"
+              className={inputMode === 'explore' ? 'mode-tab active' : 'mode-tab'}
+              onClick={() => setInputMode('explore')}
+            >
+              Explore
+            </button>
           </div>
 
-          {inputMode === 'form' ? (
+          {inputMode === 'form' && (
             <FormInput
               addStep={addStep}
               form={form}
@@ -359,7 +449,8 @@ function App() {
               update={update}
               updateStep={updateStep}
             />
-          ) : (
+          )}
+          {inputMode === 'json' && (
             <JsonInput
               importToForm={importJsonToForm}
               isRunning={isRunning}
@@ -368,6 +459,26 @@ function App() {
               setJsonText={setJsonText}
               submitJson={() => void submitJson()}
               uploadJsonFile={(file) => void uploadJsonFile(file)}
+            />
+          )}
+          {inputMode === 'explore' && (
+            <ExploreInput
+              copyCommand={() => exploreRecording && void copyRecordingCommand(exploreRecording)}
+              exploreFramework={exploreFramework}
+              exploreRecording={exploreRecording}
+              exploreRecordingMessage={exploreRecordingMessage}
+              exploreSourceId={exploreSourceId}
+              exploreStatus={exploreStatus}
+              exploreTitle={exploreTitle}
+              exploreUrl={exploreUrl}
+              generateExploration={() => void generateExploration()}
+              isRunning={isRunning}
+              prepareExploration={() => void prepareExploration()}
+              setExploreFramework={setExploreFramework}
+              setExploreSourceId={setExploreSourceId}
+              setExploreTitle={setExploreTitle}
+              setExploreUrl={setExploreUrl}
+              startRecording={() => exploreRecording && void startRecording(exploreRecording)}
             />
           )}
           {error && <div className="error-box">{error}</div>}
@@ -409,6 +520,7 @@ function App() {
           />
 
           <PublishResult publishResult={response?.publish_result ?? null} />
+          <GeneratedTestCaseSummary testCase={response?.generated_test_case ?? null} />
 
           <section className="output-panel">
             <div className="output-header">
@@ -700,6 +812,138 @@ function FormInput({
   )
 }
 
+function ExploreInput({
+  copyCommand,
+  exploreFramework,
+  exploreRecording,
+  exploreRecordingMessage,
+  exploreSourceId,
+  exploreStatus,
+  exploreTitle,
+  exploreUrl,
+  generateExploration,
+  isRunning,
+  prepareExploration,
+  setExploreFramework,
+  setExploreSourceId,
+  setExploreTitle,
+  setExploreUrl,
+  startRecording,
+}: {
+  copyCommand: () => void
+  exploreFramework: FrameworkProfile
+  exploreRecording: WebRecordingEvidence | null
+  exploreRecordingMessage?: string | null
+  exploreSourceId: string
+  exploreStatus: string | null
+  exploreTitle: string
+  exploreUrl: string
+  generateExploration: () => void
+  isRunning: boolean
+  prepareExploration: () => void
+  setExploreFramework: (value: FrameworkProfile) => void
+  setExploreSourceId: (value: string) => void
+  setExploreTitle: (value: string) => void
+  setExploreUrl: (value: string) => void
+  startRecording: () => void
+}) {
+  return (
+    <section className="explore-input-panel">
+      <SectionTitle icon={<Globe2 size={18} />} title="Exploratory Testing" />
+      <p className="helper-text">
+        Provide an application URL, record a real user journey with Playwright, then convert that recording into a
+        testcase and Java automation using the existing generator workflow.
+      </p>
+
+      <label>
+        Application URL
+        <input
+          value={exploreUrl}
+          onChange={(event) => setExploreUrl(event.target.value)}
+          placeholder="https://test.example.com"
+        />
+      </label>
+
+      <div className="field-grid two">
+        <label>
+          Framework
+          <select value={exploreFramework} onChange={(event) => setExploreFramework(event.target.value as FrameworkProfile)}>
+            <option value="java-bdd-maven">Cucumber JUnit Maven</option>
+            <option value="java-testng-maven">TestNG Maven</option>
+          </select>
+        </label>
+        <label>
+          Optional testcase ID
+          <input
+            value={exploreSourceId}
+            onChange={(event) => setExploreSourceId(event.target.value)}
+            placeholder="TC_EXPLORE_LOGIN_001"
+          />
+        </label>
+      </div>
+
+      <label>
+        Optional title
+        <input
+          value={exploreTitle}
+          onChange={(event) => setExploreTitle(event.target.value)}
+          placeholder="Exploratory login journey"
+        />
+      </label>
+
+      <button type="button" className="primary-button" onClick={prepareExploration} disabled={isRunning}>
+        <Terminal size={18} />
+        Prepare Recording
+      </button>
+
+      {exploreRecording && (
+        <article className="explore-recording-card">
+          <div className="recording-card-header">
+            <div>
+              <strong>{exploreRecording.test_case_id}</strong>
+              <p>Start recorder, explore the app, close codegen, then generate scripts from the saved recording.</p>
+            </div>
+            <span>{exploreRecording.app_url}</span>
+          </div>
+          <label>
+            Codegen command
+            <textarea readOnly rows={3} value={exploreRecording.command.join(' ')} />
+          </label>
+          <div className="recording-path-grid">
+            <div>
+              <span>Output script</span>
+              <code>{exploreRecording.recording_script_path}</code>
+            </div>
+            {exploreRecording.notes_path && (
+              <div>
+                <span>Notes</span>
+                <code>{exploreRecording.notes_path}</code>
+              </div>
+            )}
+          </div>
+          <div className="recording-actions">
+            <button type="button" className="secondary-button" onClick={startRecording}>
+              <Play size={16} />
+              Start recorder
+            </button>
+            <button type="button" className="secondary-button" onClick={copyCommand}>
+              <Clipboard size={16} />
+              Copy command
+            </button>
+            <button type="button" className="primary-button small" onClick={generateExploration} disabled={isRunning}>
+              {isRunning ? <Loader2 className="spin" size={16} /> : <FileCheck2 size={16} />}
+              Generate Scripts From Exploration
+            </button>
+          </div>
+          {exploreRecordingMessage && <div className="recording-message">{exploreRecordingMessage}</div>}
+        </article>
+      )}
+
+      {exploreStatus && <div className="json-status">{exploreStatus}</div>}
+    </section>
+  )
+}
+
 function JsonInput({
   importToForm,
   isRunning,
@@ -969,6 +1213,18 @@ function parseJson(value: string) {
   }
 }
 
+function assertHttpUrl(value: string) {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error('Enter a valid application URL before starting exploration.')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Application URL must start with http:// or https://.')
+  }
+}
+
 function splitLines(value: string) {
   return value
     .split(/\n|,/)
@@ -1129,6 +1385,37 @@ function RecordingTasks({
             </article>
           )
         })}
+      </div>
+    </section>
+  )
+}
+
+function GeneratedTestCaseSummary({ testCase }: { testCase: GeneratedTestCase | null }) {
+  if (!testCase) {
+    return null
+  }
+
+  return (
+    <section className="generated-testcase-panel">
+      <SectionTitle icon={<ClipboardList size={18} />} title="Generated Testcase" />
+      <div className="generated-testcase-header">
+        <div>
+          <strong>{testCase.source_id}</strong>
+          <p>{testCase.title}</p>
+        </div>
+        <span>{testCase.automation_layers.join(', ') || 'ui'}</span>
+      </div>
+      {testCase.description && <p className="helper-text">{testCase.description}</p>}
+      <div className="generated-step-list">
+        {testCase.steps.map((step) => (
+          <div className="generated-step" key={step.step_number}>
+            <span>{step.step_number}</span>
+            <div>
+              <strong>{step.action}</strong>
+              {step.expected_result && <p>{step.expected_result}</p>}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   )
