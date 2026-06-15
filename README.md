@@ -97,6 +97,12 @@ flowchart LR
 uv sync
 ```
 
+Install the Playwright browser used by the Explore recorder:
+
+```powershell
+npx playwright install chromium
+```
+
 Update `.env` with your local settings. Mesh API variables are named:
 
 ```env

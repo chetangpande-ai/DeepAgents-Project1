@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import time
 from typing import Any
 from typing import Literal
 
@@ -236,11 +237,11 @@ def _run_generation(
 @app.post("/api/recordings/start", response_model=StartRecordingResponse)
 def start_recording(request: StartRecordingRequest) -> StartRecordingResponse:
     command = _validated_playwright_command(request.command)
+    log_path = _recording_launch_log_path(command)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict[str, Any] = {
         "cwd": str(Path.cwd()),
         "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
     }
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -248,17 +249,35 @@ def start_recording(request: StartRecordingRequest) -> StartRecordingResponse:
         kwargs["start_new_session"] = True
 
     try:
-        process = subprocess.Popen(command, **kwargs)
+        with log_path.open("w", encoding="utf-8", errors="ignore") as log_file:
+            process = subprocess.Popen(
+                command,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                **kwargs,
+            )
     except OSError as exc:
         raise HTTPException(
             status_code=400,
             detail=f"Unable to start Playwright codegen: {exc}",
         ) from exc
 
+    time.sleep(2)
+    return_code = process.poll()
+    if return_code is not None:
+        launch_output = _read_text_tail(log_path)
+        raise HTTPException(
+            status_code=400,
+            detail=_recording_launch_failure_message(return_code, launch_output, log_path),
+        )
+
     return StartRecordingResponse(
         status="started",
         pid=process.pid,
-        message="Playwright recorder started. Close the recorder window when recording is complete.",
+        message=(
+            "Playwright recorder started. Close the recorder window when recording is complete. "
+            f"Launch log: {log_path}"
+        ),
     )
 
 
@@ -466,6 +485,36 @@ def _publish_notice_message(publish_result: RepositoryPublishResult) -> str:
 
 def _exploratory_source_id() -> str:
     return datetime.now(timezone.utc).strftime("TC_EXPLORE_%Y%m%d%H%M%S")
+
+
+def _recording_launch_log_path(command: list[str]) -> Path:
+    output_index = command.index("--output")
+    output_path = Path(command[output_index + 1])
+    return output_path.parent / "playwright-codegen-launch.log"
+
+
+def _recording_launch_failure_message(
+    return_code: int,
+    launch_output: str,
+    log_path: Path,
+) -> str:
+    install_hint = ""
+    if "playwright install" in launch_output.lower() or "executable doesn't exist" in launch_output.lower():
+        install_hint = " Install Playwright browsers with `npx playwright install chromium` and try again."
+    details = f" Details: {launch_output}" if launch_output else ""
+    return (
+        f"Playwright recorder exited immediately with code {return_code}.{install_hint} "
+        f"Launch log: {log_path}.{details}"
+    )
+
+
+def _read_text_tail(path: Path, max_chars: int = 2000) -> str:
+    if not path.exists():
+        return ""
+    content = path.read_text(encoding="utf-8", errors="ignore").strip()
+    if len(content) <= max_chars:
+        return content
+    return content[-max_chars:]
 
 
 def _validated_playwright_command(command: list[str]) -> list[str]:

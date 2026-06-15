@@ -60,6 +60,43 @@ def test_recording_launcher_rejects_non_playwright_command() -> None:
     assert response.status_code == 400
 
 
+def test_recording_launcher_surfaces_immediate_playwright_failure(monkeypatch) -> None:
+    client = TestClient(app)
+
+    class FailedProcess:
+        pid = 12345
+
+        def poll(self) -> int:
+            return 1
+
+    def fake_popen(command, stdout, stderr, **kwargs):
+        stdout.write("Executable doesn't exist. Please run: npx playwright install\n")
+        stdout.flush()
+        return FailedProcess()
+
+    monkeypatch.setattr("test_script_generator.web_api.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("test_script_generator.web_api.time.sleep", lambda _: None)
+
+    response = client.post(
+        "/api/recordings/start",
+        json={
+            "command": [
+                "npx",
+                "playwright",
+                "codegen",
+                "--target",
+                "java",
+                "--output",
+                ".tsg-runs/test-recorder-failure/playwright-codegen.java",
+                "https://example.com",
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert "npx playwright install chromium" in response.json()["detail"]
+
+
 def test_exploratory_prepare_returns_recording_task() -> None:
     client = TestClient(app)
 
